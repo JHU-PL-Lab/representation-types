@@ -124,7 +124,7 @@ let rec for_some l f =
   | e :: l' -> if f e then true else for_some l' f
 
 
-let rec is_comparable_simple (t1 : simple_type) (t2 : simple_type) : bool =
+let rec is_non_conflicting_simple (t1 : simple_type) (t2 : simple_type) : bool =
   match t1, t2 with
   |       _, TUniv
   | TBottom,     _  -> true
@@ -133,12 +133,13 @@ let rec is_comparable_simple (t1 : simple_type) (t2 : simple_type) : bool =
       let module Set = Set.Make(String) in
       let r1_lbls = r1 |> List.map fst |> Set.of_list in
       let r2_lbls = r2 |> List.map fst |> Set.of_list in
-      Set.equal r2_lbls (Set.inter r1_lbls r2_lbls) &&
-      for_all r2 (fun (lbl, elem_2) ->
-        match List.assoc_opt lbl r1 with
-        | None         -> false
-        | Some(elem_1) -> is_comparable_simple elem_1 elem_2
-      )
+      let inter_lbls = Set.inter r1_lbls r2_lbls in
+      Set.for_all (fun lbl ->
+        (* guaranteed these lookups should not fail *)
+        let r1_elem = List.assoc lbl r1 in
+        let r2_elem = List.assoc lbl r2 in
+          is_non_conflicting_simple r1_elem r2_elem
+      ) inter_lbls
 
   | t1, t2 when t1 = t2 -> true
   | _others -> false
@@ -191,19 +192,29 @@ let rec canonicalize_simple (base : simple_type) : simple_type =
   | other -> other
 
 
-let minimize_minus_set (Type (base, minus_set)) : full_type =
-  let add_if_not_subsumed mt mts =
-    if (mt = TBottom)
-    || (not (is_subtype_simple mt base) && is_comparable_simple mt base)
-    || for_some mts (fun mt' -> is_subtype_simple mt mt')
-    then mts
-    else mt :: mts
+
+
+
+let canonicalize : full_type -> full_type =
+
+  let minimize_minus_set (Type (base, minus_set)) : full_type =
+    let rec traverse_insert mts mt =
+      match mts, mt with
+      |            [], mt -> [mt]
+      | (mt' :: mts'), mt ->
+        if is_subtype_simple mt  mt' then mt' :: mts' else
+        if is_subtype_simple mt' mt  then traverse_insert mts' mt else
+          if mt < mt'
+            then mt :: mt' :: mts'
+            else       mt' :: traverse_insert mts' mt
+    in
+    let minus_set' = minus_set
+      |> List.filter (fun mt -> is_non_conflicting_simple mt base)
+      |> List.fold_left traverse_insert [] in
+    Type (base, minus_set')
   in
-  let minus_set' = List.fold_right add_if_not_subsumed minus_set [] in
-  Type (base, minus_set')
 
-
-let canonicalize (Type (base, minus_set)) : full_type =
+  function Type (base, minus_set) ->
   let base'      = canonicalize_simple base in
   let minus_set' = minus_set
       |> List.map canonicalize_simple
@@ -241,8 +252,7 @@ let rec intersect_simple t1 t2 =
 let intersect (Type (base_1, minus_set_1)) (Type (base_2, minus_set_2)) =
   let base      = intersect_simple base_1 base_2 in
   let minus_set = minus_set_1 @ minus_set_2 in
-  canonicalize @@
-    Type (base, minus_set)
+  canonicalize @@ Type (base, minus_set)
 
 
 (*
@@ -272,11 +282,14 @@ let rec matches_u (pat : simple_type) (rv : untagged rvalue) =
       )
   | _ -> false
 
+
+
 type exn +=
   | Open_Expression
   | Type_Mismatch
   | Match_Fallthrough
   | Empty_Expression
+
 
 let rec eval_u : (untagged env) -> (untagged expr) -> (untagged rvalue) =
 
