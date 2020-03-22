@@ -1,10 +1,14 @@
 
+module Lens = Lens
+module Classes = Classes
 
-type ident = string
-type label = string
+open Classes
 
-type tagged = Tagged
-type untagged = Untagged
+type ident = string 
+type label = string 
+
+type tagged   = Tagged   
+type untagged = Untagged 
 
 type simple_type =
   | TInt | TTrue | TFalse | TFun
@@ -14,24 +18,16 @@ type full_type = Type of simple_type * (simple_type list)
 
 type tag_set = Tau of (int * full_type) list
 
-type _ operator =
-  | OPlus   : (int  -> int  -> int)  operator
-  | OMinus  : (int  -> int  -> int)  operator
-  | OLess   : (int  -> int  -> bool) operator
-  | OEquals : (int  -> int  -> bool) operator 
-  | OAnd    : (bool -> bool -> bool) operator
-  | OOr     : (bool -> bool -> bool) operator
-  | ONot    : (bool -> bool) operator
 
-let fn_of_operator : type f. f operator -> f =
-  function
-  | OPlus   -> (+)
-  | OMinus  -> (-)
-  | OLess   -> (<)
-  | OEquals -> (=)
-  | OAnd    -> (&&)
-  | OOr     -> (||)
-  | ONot    -> not
+type operator =
+  | OPlus   of ident * ident
+  | OMinus  of ident * ident
+  | OLess   of ident * ident
+  | OEquals of ident * ident
+  | OAnd    of ident * ident
+  | OOr     of ident * ident
+  | ONot    of ident
+  
 
 type _ value =
   | VInt of int 
@@ -42,32 +38,24 @@ type _ value =
 
   | VFun  : ident           * untagged expr -> untagged value
   | VTFun : ident * tag_set *   tagged expr ->   tagged value
+  
 
 and 't body =
   | BVar   of ident
   | BVal   of 't value
-  | BOpr   : 'f operator * ident * ident -> 't body
+  | BOpr   of operator
   | BApply of ident * ident
   | BProj  of ident * label
   | BMatch of ident * (simple_type * 't expr) list
+  
 
 and _ clause =
   | Cl  : ident           * untagged body -> untagged clause
   | TCl : ident * tag_set *   tagged body ->   tagged clause
+  
 
 and 't expr = 't clause list
-and 't env  = (ident * 't rvalue) list
-
-and _ rvalue =
-  | RInt  of int
-  | RBool of bool
-  
-  | RRec  : untagged env * (label * ident) list -> untagged rvalue
-  | RTRec :   tagged env * (label * ident) list ->   tagged rvalue
-
-  | RFun  : untagged env * ident           * untagged expr -> untagged rvalue
-  | RTFun :   tagged env * ident * tag_set *   tagged expr ->   tagged rvalue
-
+and 't env  = (ident * 't) list
 
 let rec untag_value : type t. (t value) -> untagged value =
   function
@@ -85,7 +73,7 @@ and untag_body : type t. (t body) -> untagged body =
   function
   | BVar i -> BVar i
   | BVal v -> BVal (untag_value v)
-  | BOpr (o, i1, i2)  -> BOpr (o, i1, i2)
+  | BOpr o -> BOpr o
   | BApply (id1, id2) -> BApply (id1, id2)
   | BProj (id, lbl)   -> BProj (id, lbl)
   | BMatch (id, pats) -> 
@@ -99,19 +87,42 @@ and untag_clause : type t. (t clause) -> untagged clause =
 and untag_expr : type t. (t expr) -> untagged expr =
   fun expr -> List.map untag_clause expr
   
-and untag_env : type t. (t env) -> untagged env =
-  fun env ->
-    List.map (fun (id, rval) -> (id, untag_rvalue rval)) env
   
-and untag_rvalue : type t. (t rvalue) -> untagged rvalue =
-  function
-  | RInt i  -> RInt i
-  | RBool b -> RBool b
-  | RRec  (env, record)      -> RRec (          env, record)
-  | RTRec (env, record)      -> RRec (untag_env env, record)
-  | RFun  (env, id,    expr) -> RFun (          env, id,            expr)
-  | RTFun (env, id, _, expr) -> RFun (untag_env env, id, untag_expr expr)
+module RValue (F : Functor) = struct
 
+  module F = F;;
+
+  type _ rvalue' =
+    | RInt  of int
+    | RBool of bool
+    
+    | RRec  : untagged rvalue env * (label * ident) list -> untagged rvalue'
+    | RTRec :   tagged rvalue env * (label * ident) list ->   tagged rvalue'
+
+    | RFun  : untagged rvalue env * ident           * untagged expr -> untagged rvalue'
+    | RTFun :   tagged rvalue env * ident * tag_set *   tagged expr ->   tagged rvalue'
+    
+
+  and 't rvalue = 't rvalue' F.t
+
+  let rec untag_rvalue : type t. (t rvalue) -> untagged rvalue =
+    fun rval ->
+      let untag_rvalue' : type t. (t rvalue') -> untagged rvalue' =
+      function
+      | RInt i  -> RInt i
+      | RBool b -> RBool b
+      | RRec  (env, record)      -> RRec (          env, record)
+      | RTRec (env, record)      -> RRec (untag_env env, record)
+      | RFun  (env, id,    expr) -> RFun (          env, id,            expr)
+      | RTFun (env, id, _, expr) -> RFun (untag_env env, id, untag_expr expr)
+      in
+        F.map untag_rvalue' rval
+
+  and untag_env : type t. (t rvalue env) -> untagged rvalue env =
+    fun env ->
+      List.map (fun (id, rval) -> (id, untag_rvalue rval)) env
+
+end;;
 
 let rec for_all l f =
   match l with
@@ -193,8 +204,6 @@ let rec canonicalize_simple (base : simple_type) : simple_type =
 
 
 
-
-
 let canonicalize : full_type -> full_type =
 
   let minimize_minus_set (Type (base, minus_set)) : full_type =
@@ -255,35 +264,6 @@ let intersect (Type (base_1, minus_set_1)) (Type (base_2, minus_set_2)) =
   canonicalize @@ Type (base, minus_set)
 
 
-(*
-
-  Currently forget about incomparable subtracted types:
-
-    minimize_minus_set @@ Type (TRec ["x", TInt], [TRec ["y", TInt]])
-      => Type (TRec ["x", TInt], [])
-
-*)
-
-let rec matches_u (pat : simple_type) (rv : untagged rvalue) =
-  match pat, rv with
-  |  TUniv,           _
-  |   TInt, RInt      _
-  |  TTrue, RBool  true
-  | TFalse, RBool false
-  |   TFun, RFun (_, _, _) -> true
-  | TRec (record), RRec (env, record') ->
-      for_all record (fun (lbl, pat') ->
-        match List.assoc_opt lbl record' with
-        | None      -> false
-        | Some(id)  ->
-        match List.assoc_opt id env with
-        | None      -> false
-        | Some(rv') -> matches_u pat' rv'  
-      )
-  | _ -> false
-
-
-
 type exn +=
   | Open_Expression
   | Type_Mismatch
@@ -291,102 +271,188 @@ type exn +=
   | Empty_Expression
 
 
-let rec eval_u : (untagged env) -> (untagged expr) -> (untagged rvalue) =
+module FlowEvaluator = struct
 
-  let ( let+ ) v f =
-    try f v with Match_failure (_, _, _) -> raise Type_Mismatch in
+  type flow_tag =
+    | Original
+    | Source of ident
 
-  let eval_value env =
-    function
-    | VInt i -> RInt i
-    | VTrue  -> RBool true
-    | VFalse -> RBool false
-    | VRec (record)   -> RRec (env, record)
-    | VFun (id, expr) -> RFun (env, id, expr)
-  in
+  module Flow_tags = Last(struct
+    type t = flow_tag
+    let empty = Original
+  end)
 
-  let [@warning "-8"] eval_opr v1 v2 (type f) (o : f operator) =
-    match o with
-    | OPlus | OMinus as o ->
-      begin
-        let+ RInt i1 = v1 in
-        let+ RInt i2 = v2 in
-          RInt (fn_of_operator o i1 i2)
-      end
+  module Flow_map = Map.Make(String)
 
-    | OLess | OEquals as o ->
-      begin
-        let+ RInt i1 = v1 in
-        let+ RInt i2 = v2 in
-          RBool (fn_of_operator o i1 i2)
-      end
+  module RValues = RValue(Writer(Flow_tags));;
+  open! RValues;;
 
-    | OAnd | OOr as o ->
-      begin
-        let+ RBool b1 = v1 in
-        let+ RBool b2 = v2 in
-          RBool (fn_of_operator o b1 b2)
-      end
+  let pp_flow_map pp_val fmt flow =
+    Format.pp_print_char fmt '{';
+    Format.pp_print_cut fmt ();
+    Flow_map.iter (fun k v ->
+      Format.pp_print_string fmt k;
+      Format.pp_print_string fmt " -> ";
+      pp_val fmt v;
+      Format.pp_print_char fmt ',';
+      Format.pp_print_cut fmt ()) flow;
+    Format.pp_print_char fmt '}'
 
-    | ONot as o ->
-      begin
-        let+ RBool b1 = v1 in
-          RBool (fn_of_operator o b1)
-      end
-  in
+  type flow_state =
+    {
+      env  : untagged rvalue env;
+      flow : ident list Flow_map.t;
+    }
 
-  let lookup env id =
+  module State = MonadUtil(State(struct type t = flow_state end));;
+  open State.Syntax;;
+
+  let ( let$ ) v f = 
+    try f v with | Match_failure (_, _, _) -> raise Type_Mismatch
+  
+  let ( let$+ ) v f =
+      try f <$> v with | Match_failure (_, _, _) -> raise Type_Mismatch
+
+  let ( let$* ) v f =
+      try f >>= v with | Match_failure (_, _, _) -> raise Type_Mismatch
+
+  let rec matches_u (pat : simple_type) (rv : untagged rvalue) =
+  
+    match pat, rv with
+    |  TUniv,          _
+    |   TInt, (_, RInt _)
+    |  TTrue, (_, RBool  true)
+    | TFalse, (_, RBool false)
+    |   TFun, (_, RFun (_, _, _)) -> true
+    | TRec (record), (_, RRec (env, record')) ->
+        for_all record (fun (lbl, pat') ->
+          match List.assoc_opt lbl record' with
+          | None      -> false
+          | Some(id)  ->
+          match List.assoc_opt id env with
+          | None      -> false
+          | Some(rv') -> matches_u pat' rv'  
+        )
+    | _ -> false
+
+
+  let get_env : untagged rvalue env State.t
+    = fun s -> (s, s.env)
+  
+  let use_env env' (act : 'a State.t) : 'a State.t =
+    fun s ->
+      let (s', v) = act {s with env = env'} in
+        ({s with flow = s'.flow}, v)
+
+  let modify (f : flow_state -> flow_state) : unit State.t =
+    fun s -> (f s, ())
+
+  let lookup id : untagged rvalue State.t =
+    let+ env = get_env in
     match List.assoc_opt id env with
     | None    -> raise Open_Expression
     | Some(v) -> v
-  in
 
-  let [@warning "-8"] eval_proj v1 lbl =
-    begin
-      let+ RRec (env', record) = v1 in
-      match List.assoc_opt lbl record with
-      | None     -> raise Type_Mismatch
-      | Some(id) -> lookup env' id
+  let eval_value v : untagged rvalue State.t =
+    let+ env = get_env in 
+    match v with
+    | VInt i -> (Original, RInt i)
+    | VTrue  -> (Original, RBool true)
+    | VFalse -> (Original, RBool false)
+    | VRec (record)   -> (Original, RRec (env, record))
+    | VFun (id, expr) -> (Original, RFun (env, id, expr))
+
+  let [@warning "-8"] eval_op o : untagged rvalue State.t =
+    try match o with
+    | OPlus (i1, i2) -> 
+        let+ (_, RInt r1) = lookup i1 
+        and+ (_, RInt r2) = lookup i2
+        in (Original, RInt (r1 + r2))
+    
+    | OMinus (i1, i2) -> 
+        let+ (_, RInt r1) = lookup i1 
+        and+ (_, RInt r2) = lookup i2
+        in (Original, RInt (r1 - r2))
+    
+    | OLess (i1, i2) -> 
+        let+ (_, RInt r1) = lookup i1 
+        and+ (_, RInt r2) = lookup i2
+        in (Original, RBool (r1 < r2))
+    
+    | OEquals (i1, i2) -> 
+        let+ (_, RInt r1) = lookup i1 
+        and+ (_, RInt r2) = lookup i2
+        in (Original, RBool (r1 = r2))
+    
+    | OAnd (i1, i2) -> 
+        let+ (_, RBool r1) = lookup i1 
+        and+ (_, RBool r2) = lookup i2
+        in (Original, RBool (r1 && r2))
+    
+    | OOr (i1, i2) -> 
+        let+ (_, RBool r1) = lookup i1 
+        and+ (_, RBool r2) = lookup i2
+        in (Original, RBool (r1 || r2))
+    
+    | ONot (i1)  -> 
+        let+ (_, RBool r1) = lookup i1
+        in (Original, RBool (not r1))
+    with
+    | Match_failure (_, _, _) -> raise Type_Mismatch
+
+  let [@warning "-8"] eval_proj id lbl : untagged rvalue State.t =
+    let$+ (_, RRec (env', record)) = lookup id in
+    let$ Some(id') = List.assoc_opt lbl record in
+      begin match List.assoc_opt id' env' with
+        | None      -> raise Open_Expression
+        | Some(v')  -> v'
+      end
+
+  let rec eval_apply id1 id2 =
+    State.join begin [@warning "-8"]
+      let$+ (_, RFun (env', id, expr)) = lookup id1 in
+      let* v2 = lookup id2 in
+        use_env ((id, v2) :: env') @@ eval_f expr
     end
-  in
 
-  let eval_body env =
+  and eval_body =
     function
-    | BVar id -> lookup env id
-    
-    | BVal v  -> eval_value env v
-    
-    | BOpr (o, id1, id2) ->
-        let v1 = lookup env id1 in
-        let v2 = lookup env id2 in
-          eval_opr v1 v2 o
-    
-    | BProj (id, lbl) ->
-        let v1 = lookup env id in
-          eval_proj v1 lbl
-
-    | BApply (id1, id2) ->
-        begin [@warning "-8"]
-          let+ RFun (env', id, expr) = lookup env id1 in
-          let  v2                    = lookup env id2 in
-            eval_u ((id, v2) :: env') expr
-        end
+    | BVar id -> lookup id
+    | BVal v -> eval_value v
+    | BOpr o -> eval_op o
+    | BProj (id, lbl) -> eval_proj id lbl
+    | BApply (id1, id2) -> eval_apply id1 id2
 
     | BMatch (id, branches) ->
-        let v1 = lookup env id in
+        let* v1 = lookup id in
         let branch = List.find_opt
           (fun (pat, _) -> matches_u pat v1) branches in
         match branch with
         | None -> raise Match_Fallthrough
-        | Some((_, expr')) -> eval_u env expr'
-          
-  in
-  
-  fun env expr ->
+        | Some((_, expr')) -> eval_f expr'
+
+  and eval_f expr =
     match expr with
     | [] -> raise Empty_Expression
     | Cl (id, body) :: cls ->
-      let body_value = eval_body env body in
+      let* body_value = eval_body body in
+      let (origin, rval) = body_value in
+      let* () = modify @@ fun s -> {
+        env  = (id, (Source id, rval)) :: s.env;
+        flow =
+          match origin with
+          | Original -> s.flow
+          | Source(o) ->
+            Flow_map.update id
+              (function | None    -> Some [o]
+                        | Some os -> Some (o :: os))
+              s.flow;
+      } in
       if cls = []
-        then body_value
-        else eval_u ((id, body_value) :: env) cls
+        then State.pure body_value
+        else eval_f cls
+
+  let eval expr =
+    eval_f expr { env = []; flow = Flow_map.empty; }
+
+end;;
