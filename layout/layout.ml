@@ -277,14 +277,12 @@ module FlowEvaluator = struct
     | Original
     | Source of ident
 
-  module Flow_tags = Last(struct
-    type t = flow_tag
-    let empty = Original
-  end)
-
   module Flow_map = Map.Make(String)
 
-  module RValues = RValue(Writer(Flow_tags));;
+  module RValues = RValue(WriterF(struct
+    type t = flow_tag
+  end));;
+  
   open! RValues;;
 
   let pp_flow_map pp_val fmt flow =
