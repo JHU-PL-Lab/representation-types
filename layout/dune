@@ -1,7 +1,6 @@
 (library
  (name layout)
- (modules layout lens classes)
+ (modules layout types ast lens classes)
  (libraries ppx_deriving)
  (preprocess
-    (pps
-        ppx_deriving.show)))
+    (pps ppx_deriving.show)))
