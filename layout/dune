@@ -1,6 +1,18 @@
 (library
  (name layout)
- (modules layout types ast lens classes)
+ (modules layout types ast lens classes
+   lexer parser parser_util)
  (libraries ppx_deriving)
  (preprocess
     (pps ppx_deriving.show)))
+
+(env
+   (dev
+      (flags (:standard -w -23-33-38-39-66 ))))
+
+(ocamllex
+   (modules lexer))
+
+(menhir
+   (modules parser)
+   (flags --explain))

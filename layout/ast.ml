@@ -169,3 +169,7 @@ struct
   end
 
 end
+
+
+module Ast'    = Make(Identity)(Identity)
+module RValue' = Ast'.RValue(Identity)

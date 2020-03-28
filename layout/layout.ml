@@ -3,12 +3,12 @@ module Lens = Lens
 module Types = Types
 module Classes = Classes
 module Ast = Ast
+module Parser = Parser
+module Lexer = Lexer
 
-(* open Types *)
+open Ast
+open Types
 open Classes
-
-module Ast' = Ast.Make(Identity)(Identity)
-module RValue' = Ast'.RValue(Identity)
 
 
 type exn +=
@@ -55,10 +55,10 @@ module FlowEvaluator = struct
       type_flow : simple_type list Flow_map.t;
     }
 
-  module State = MonadUtil( State(struct type t = flow_state end) )
+  module State = State_Util(struct type t = flow_state end)
   open State.Syntax  
 
-  open TraversableUtil(Lists)
+  open Traversable_Util(Lists)
   open Make_Traversable(State)
 
 
@@ -81,16 +81,9 @@ module FlowEvaluator = struct
   let get_env : rvalue env State.t
     = fun s -> (s, s.env)
 
-  let control f f' (sa : 'a State.t) : 'a State.t =
-    fun s ->
-      let (s', a) = sa (f s) in
-        (f' s s', a)
-  
-  let modify f : unit State.t =
-    fun s -> (f s, ())
 
   let use_env env' =
-    control
+    State.control
       (fun s    -> {s  with env = env'  })
       (fun s s' -> {s' with env = s.env })
 
@@ -118,7 +111,7 @@ module FlowEvaluator = struct
         | None      -> Some [type_of rval]
         ) f
     in
-    modify (fun s -> { s with
+    State.modify (fun s -> { s with
       flow      = update_flow  s.flow;
       type_flow = update_tflow s.type_flow;
     })
@@ -134,9 +127,8 @@ module FlowEvaluator = struct
         original @@ RFun (env, id, expr))
 
     | VRec (record)  -> 
-      let* record' = traverse
-        (fun (lbl, id) -> let+ rv = lookup id in (lbl, rv))
-        record
+      let* record' = record |> traverse (fun (lbl, id) -> 
+        let+ rv = lookup id in (lbl, rv))
       in
         original @@ RRec record'
 
@@ -217,7 +209,7 @@ module FlowEvaluator = struct
     | Cl (id, body) :: cls ->
       let* body_value = eval_body body in
       let* () = register_flow id body_value in
-      let* () = modify (fun s -> { s with
+      let* () = State.modify (fun s -> { s with
         env = (id, retag_rvalue id body_value) :: s.env;
       })
       in if cls = []
@@ -245,41 +237,52 @@ module Tests = struct
 
   open Ast'
 
+  let parse s =
+    Parser.main Lexer.read (Lexing.from_string s)
+
   (* basic operations *)
-  let e1 = [
-    Cl ("x1", BVal (VInt 10));
-    Cl ("x2", BVal (VInt 20));
-    Cl ("x3", BOpr (OPlus ("x1", "x2")));
-  ]
+  let e1 = parse "
+    let x = 10 in
+    let y = 20 in
+      x + y
+  "
 
   (* closures *)
-  let e2 = [
-    Cl ("f1", BVal (VFun ("a1",[
-      Cl ("f2", BVal (VFun ("a2", [
-        Cl ("r1", BOpr (OPlus ("a1", "a2")));
-      ])));
-    ])));
+  let e2 = parse "
+    let f1 = fun a1 -> fun a2 -> a1 + a2 in
 
-    Cl ("x1", BVal (VInt 10));
-    Cl ("x2", BVal (VInt 20));
-    Cl ("x3", BVal (VInt 200));
+    let f3 = f1 10 in
 
-    Cl ("f3", BApply ("f1", "x1"));
-
-    Cl ("x4", BApply ("f3", "x2"));
-    Cl ("x5", BApply ("f3", "x3"));
-  ]
-
+    let x1 = f3 20 in
+    let x3 = f3 200 in
+      x3
+  "
+  
   (* records *)
-  let e3 = [
-    Cl ("t", BVal VTrue);
-    Cl ("f", BVal VFalse);
+  let e3 = parse "
+    let t = true in
+    let f = false in
 
-    Cl ("x1", BVal (VRec [("a", "t"); ("b", "f")]));
-    Cl ("x2", BVal (VRec [("x", "x1")]));
+    let r = { x = { a = t; b = f } } in
+    let q = r.x.b in
+      q
+  "
 
-    Cl ("x3", BProj ("x2", "x"));
-    Cl ("x4", BProj ("x3", "b"));
-  ]
+  (* y-combinator *)
+  let e4 = parse "
+    let y = fun f ->
+      let o = fun x -> f (fun arg -> x x arg)
+      in o o   
+    in
+
+    let sum = y (fun sum -> fun n ->
+      match n == 0 with
+      | false -> n + sum (n - 1)
+      | true  -> 0
+      end
+    ) in
+
+    sum 10
+  "
 
 end

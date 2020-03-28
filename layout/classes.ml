@@ -5,17 +5,22 @@
 
 *)
 
-module type Monoid = sig
+module type Semigroup = sig
   type t
   val append : t -> t -> t
-  val empty : t
 end
 
-module MonoidUtil (M : Monoid) = struct
-  include M
+module SemigroupUtil (S : Semigroup) = struct
+  include S
   module Syntax = struct 
-    let ( <> ) = M.append
+    let ( <> ) = S.append
   end
+end
+
+module type Monoid = sig
+  type t
+  include Semigroup with type t := t
+  val empty : t
 end
 
 module First (T : sig type t val empty : t end)
@@ -64,14 +69,14 @@ struct
   let empty = true
 end
 
-module OptionMonoid_Any (M : Monoid)
-  : Monoid with type t = M.t option =
+module OptionMonoid (S : Semigroup)
+  : Monoid with type t = S.t option =
 struct
-  type t = M.t option
+  type t = S.t option
 
   let append o1 o2 =
     match o1, o2 with
-    | Some(m1), Some(m2) -> Some(M.append m1 m2)
+    | Some(m1), Some(m2) -> Some(S.append m1 m2)
     | None,     Some(m2) -> Some(m2)
     | Some(m1), None     -> Some(m1)
     | None,     None     -> None
@@ -79,20 +84,6 @@ struct
   let empty = None
 end
 
-module OptionMonoid_All (M : Monoid)
-  : Monoid with type t = M.t option =
-struct
-  type t = M.t option
-
-  let append o1 o2 =
-    match o1, o2 with
-    | Some(m1), Some(m2) -> Some(M.append m1 m2)
-    | None,     Some(_)  -> None
-    | Some(_),  None     -> None
-    | None,     None     -> None
-
-  let empty = Some(M.empty)
-end
 
 module ListMonoid (T : sig type t end)
   : Monoid with type t = T.t list =
@@ -109,11 +100,11 @@ end
 *)
 
 module type Functor = sig
-  type +'a t
+  type 'a t
   val map : ('a -> 'b) -> 'a t -> 'b t
 end
 
-module FunctorUtil (F : Functor) = struct
+module Functor_Util (F : Functor) = struct
   include F
   module Syntax = struct
     let ( <$> ) = F.map
@@ -124,7 +115,7 @@ end
 module Compose (F : Functor) (G : Functor)
   : Functor with type 'a t = 'a G.t F.t =
 struct
-  type +'a t = 'a G.t F.t
+  type 'a t = 'a G.t F.t
   let map f a = F.map (G.map f) a
 end
 
@@ -156,14 +147,14 @@ end
 *)
 
 module type Comonad = sig
-  type +'a t
+  type 'a t
   include Functor with type 'a t := 'a t
 
   val extract : 'a t -> 'a
   val extend : 'a t -> ('a t -> 'b) -> 'b t
 end
 
-module ComonadUtil (W : Comonad) = struct
+module Comonad_Util (W : Comonad) = struct
   include W
 
   let duplicate w = extend w (fun a -> a)
@@ -198,8 +189,8 @@ struct
 
   let extract fga = G.extract (F.extract fga)
   let extend fga f =
-    let module F = ComonadUtil(F) in
-    let module G = ComonadUtil(G) in
+    let module F = Comonad_Util(F) in
+    let module G = Comonad_Util(G) in
     F.extend fga @@ fun fga ->
       fga |> F.map (G.duplicate)
           |> D.distribute
@@ -214,7 +205,7 @@ end
 *)
 
 module type Foldable = sig
-  type +'a t
+  type 'a t
   include Functor with type 'a t := 'a t
 
   module Make_Foldable (M : Monoid) : sig
@@ -222,9 +213,9 @@ module type Foldable = sig
   end
 end
 
-module FoldableUtil (F : Foldable) = struct
+module Foldable_Util (F : Foldable) = struct
   include F
-  include FunctorUtil(F)
+  include Functor_Util(F)
 
   let fold_map
     : type m. (module Monoid with type t = m) -> ('a -> m) -> ('a F.t) -> m =
@@ -310,16 +301,16 @@ end
 *)
 
 module type Applicative = sig
-  type +'a t
+  type 'a t
   include Functor with type 'a t := 'a t
 
   val pure  : 'a -> 'a t
   val apply : ('a -> 'b) t -> 'a t -> 'b t
 end
 
-module ApplicativeUtil (A : Applicative) = struct
+module Applicative_Util (A : Applicative) = struct
   include A
-  include FunctorUtil(A)
+  include Functor_Util(A)
 
   module Syntax = struct
     include Syntax
@@ -344,7 +335,7 @@ end
 *)
 
 module type Traversable = sig
-  type +'a t
+  type 'a t
   include Foldable with type 'a t := 'a t
 
   module Make_Traversable (A : Applicative) : sig
@@ -352,9 +343,9 @@ module type Traversable = sig
   end
 end
 
-module TraversableUtil (T : Traversable) = struct
+module Traversable_Util (T : Traversable) = struct
   include T
-  include FoldableUtil(T)
+  include Foldable_Util(T)
 
   module Make_Traversable (A : Applicative) = struct
     include T.Make_Traversable(A)
@@ -401,7 +392,7 @@ module TraversableUtil (T : Traversable) = struct
 
     let zip_with : type a b. (a -> b -> 'c) -> a T.t -> b F.t -> 'c T.t =
       fun f ta fb ->
-        let module F = FoldableUtil(F) in
+        let module F = Foldable_Util(F) in
         let acc xs y =
           match xs with
           | x::xs -> (xs, f y x)
@@ -458,15 +449,15 @@ end
 *)
 
 module type Monad = sig
-  type +'a t
+  type 'a t
   include Applicative with type 'a t := 'a t
 
   val bind : 'a t -> ('a -> 'b t) -> 'b t
 end
 
-module MonadUtil (M : Monad) = struct
+module Monad_Util (M : Monad) = struct
   include M
-  include ApplicativeUtil(M)
+  include Applicative_Util(M)
 
   module Syntax = struct
     include Syntax
@@ -486,8 +477,8 @@ struct
   include ComposeA(F)(G)
 
   let bind fga f =
-    let module F = MonadUtil(F) in
-    let module G = MonadUtil(G) in
+    let module F = Monad_Util(F) in
+    let module G = Monad_Util(G) in
     F.bind fga @@ fun ga ->
       ga |> G.map f
          |> D.distribute
@@ -656,6 +647,29 @@ struct
   type 'a t = (S.t, 'a) StateI.t
 end
 
+module State_Util (S : sig type t end) = struct
+  module State = State(S)
+  include Monad_Util(State)
+  type 'a t = 'a State.t
+
+  let get : S.t State.t =
+    fun s -> (s, s)
+
+  let put : S.t -> unit State.t =
+    fun s _ -> (s, ())
+  
+  let control f f' (sa : 'a State.t) : 'a State.t =
+    fun s ->
+      let (s', a) = sa (f s) in
+        (f' s s', a)
+  
+  let modify f : unit State.t =
+    fun s -> (f s, ())
+
+end
+
+
+
 
 module Lists : sig
   include Monad       with type 'a t = 'a list
@@ -675,7 +689,7 @@ struct
 
   module Make_Traversable (A : Applicative) = struct
     let rec traverse ab =
-      let open ApplicativeUtil(A) in
+      let open Applicative_Util(A) in
       let open Syntax in
       function
       | [] -> A.pure []
@@ -690,7 +704,7 @@ module NonEmpty : sig
   include Traversable with type 'a t = 'a * 'a list
 end =
 struct
-  type 'a t = 'a * 'a list
+  type +'a t = 'a * 'a list
 
   let map f (x, xs) = (f x, List.map f xs)
   let pure a = (a, [])
@@ -727,7 +741,7 @@ struct
   module Make_Traversable (A : Applicative) = struct
     let traverse at (x, xs) =
       let open Lists.Make_Traversable(A) in
-      let open ApplicativeUtil(A) in
+      let open Applicative_Util(A) in
       let open Syntax in
       (fun x xs -> (x, xs)) <$> at x <*> traverse at xs
   end
@@ -786,7 +800,7 @@ struct
 
   module Make_Traversable (A : Applicative) = struct
     let rec traverse at s =
-      let open ApplicativeUtil(A) in
+      let open Applicative_Util(A) in
       let open Syntax in
       match s () with
       | Seq.Nil         -> A.pure Seq.empty
@@ -794,6 +808,7 @@ struct
         (fun a s () -> Seq.Cons(a, s)) <$> (at a) <*> (traverse at s')
   end
 end
+
 
 
 module Maps (M : Map.S)
@@ -811,9 +826,44 @@ struct
   module Make_Traversable (A : Applicative) = struct
     let traverse at m =
       let m' = M.map at m in
-      let open ApplicativeUtil(A) in
+      let open Applicative_Util(A) in
       let open Syntax in
         M.fold (fun k b apm -> M.add <$> A.pure k <*> b <*> apm) m'
           (A.pure M.empty)
   end
+end
+
+
+module Arrays (Size : sig val length : int end) : sig
+  type 'a t = 'a array
+  include Monad with type 'a t := 'a t
+  include Traversable with type 'a t := 'a t
+end = 
+struct
+  type 'a t = 'a array
+
+  let map f ar = Array.map f ar
+  let pure a = Array.make Size.length a
+  let apply fs xs =
+    Array.map2 (@@) fs xs
+
+  let bind xs f =
+    map f xs |> Array.mapi 
+      (fun ix xx -> xx.(ix))
+
+
+  module Make_Foldable (M : Monoid) = struct
+    let fold_map am xs =
+      Array.fold_left (fun m a -> M.append m (am a)) M.empty xs
+  end
+
+  module Make_Traversable (A : Applicative) = struct
+    let traverse at xs =
+      let module L = Lists.Make_Traversable(A) in
+      A.map Array.of_list
+      @@ L.traverse at
+      @@ Array.to_list xs
+
+  end
+
 end
