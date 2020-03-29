@@ -1,13 +1,11 @@
 {
+  
   open Lexing
   open Parser
 
-  type exn +=
-    | Lexing_error of string
-    ;;
 }
 
-let digit = ['0' - '9']
+let digit = ['0'-'9']
 let int = digit+
 
 let space = [' ' '\t' '\n']+
@@ -42,17 +40,18 @@ rule read =
   | '-' { OP_MINUS }
   | ident {
     match lexeme lexbuf with
-    | "fun"   -> KW_FUN
-    | "match" -> KW_MATCH
-    | "with"  -> KW_WITH
     | "and"   -> KW_AND
-    | "true"  -> TRUE
-    | "false" -> FALSE
-    | "or"    -> KW_OR
-    | "not"   -> KW_NOT
-    | "let"   -> KW_LET
-    | "in"    -> KW_IN
     | "end"   -> KW_END
+    | "false" -> KW_FALSE
+    | "fun"   -> KW_FUN
+    | "in"    -> KW_IN
+    | "int"   -> KW_INT
+    | "let"   -> KW_LET
+    | "match" -> KW_MATCH
+    | "not"   -> KW_NOT
+    | "or"    -> KW_OR
+    | "true"  -> KW_TRUE
+    | "with"  -> KW_WITH
     | other   -> IDENTIFIER(other)
   }
 

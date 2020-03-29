@@ -11,18 +11,18 @@ let rec for_some l f =
 
 
 type label = string
-  [@@deriving show]
+  [@@deriving show, eq, ord]
 
 type simple_type =
   | TInt | TTrue | TFalse | TFun
   | TBottom | TUniv | TRec of (label * simple_type) list
-  [@@deriving show]
+  [@@deriving show, eq, ord]
 
 type full_type = Type of simple_type * (simple_type list)
-  [@@deriving show]
+  [@@deriving show, eq, ord]
 
 type tag_set = Tau of (int * full_type) list
-  [@@deriving show]
+  [@@deriving show, eq, ord]
 
 
 let rec is_non_conflicting_simple (t1 : simple_type) (t2 : simple_type) : bool =

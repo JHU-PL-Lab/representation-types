@@ -4,6 +4,8 @@
   open Ast.Ast'
   open Classes
 
+  open Util
+  module Util = Parser_util
   open Parser_util
 
   open Traversable_Util(Lists)
@@ -17,8 +19,8 @@
 
 %token <int> INTEGER
 
-%token TRUE
-%token FALSE
+%token KW_TRUE
+%token KW_FALSE
 
 %token <Ast.Ast'.ident> IDENTIFIER
 
@@ -30,7 +32,7 @@
 %token OP_PLUS OP_MINUS UNIV_PAT
 
 %token KW_MATCH KW_WITH KW_FUN KW_AND KW_OR KW_NOT
-%token KW_LET KW_IN KW_END
+%token KW_LET KW_IN KW_END KW_INT
 %token ALTERNATIVE ARROW
 
 %start <Ast.Ast'.expr> main
@@ -47,8 +49,9 @@ let binding ==
   | i = IDENTIFIER; { fresh' i }
 
 let pattern_type :=
-  | TRUE;     { TTrue  }
-  | FALSE;    { TFalse }
+  | KW_TRUE;  { TTrue  }
+  | KW_FALSE; { TFalse }
+  | KW_INT;   { TInt   }
   | KW_FUN;   { TFun   }
   | UNIV_PAT; { TUniv  }
   | LBRACE; fields = separated_list(SEMICOLON, record_field_type); RBRACE;
@@ -57,14 +60,6 @@ let pattern_type :=
 let record_field_type ==
   separated_pair(IDENTIFIER, COLON, pattern_type)
 
-/* let ssa ==
-  | clauses = clause+; {
-      new_block @@
-      let* _ = sequence clauses in
-      let+ emitted = get |> map (fun s -> s.emitted) in
-        Diff.to_list emitted
-   } */
-
 let ssa ==
   | ~ = expr; {
     new_block @@
@@ -72,7 +67,7 @@ let ssa ==
       let* expr = expr in
       let* () = emit @@ Cl (ret_id, expr) in
       let+ emitted = get |> map (fun s -> s.emitted) in
-        Diff.to_list emitted
+        Diff_list.to_list emitted
   }
 
 let clause ==
@@ -82,7 +77,7 @@ let clause ==
       emit @@ Cl (id, body)
   }
 
-let expr :=
+let expr ==
   | clauses = clause*; body = expr0; {
     let* _ = sequence clauses in
       body
@@ -97,6 +92,17 @@ let expr0 :=
       let+ body = add_to_env arg arg' @@ body in
       BVal (VFun (arg', body))
     }
+  | KW_MATCH; disc = expr1; KW_WITH; 
+    ALTERNATIVE?; branches = separated_list(ALTERNATIVE, match_branch);
+    KW_END;
+    {
+      let+ id = emit' disc
+      and+ branches =
+        branches |> traverse (fun (ty, branch) ->
+          let+ branch = branch in (ty, branch)
+        )
+      in BMatch (id, branches)
+    }
   | ~ = expr1; <>
 
 let expr1 :=
@@ -110,17 +116,6 @@ let expr1 :=
     and+ i2 = emit' e2
     in BOpr (OOr (i1, i2))
   }
-  | KW_MATCH; disc = expr1; KW_WITH; 
-    ALTERNATIVE?; branches = separated_list(ALTERNATIVE, match_branch);
-    KW_END;
-    {
-      let+ id = emit' disc
-      and+ branches =
-        branches |> traverse (fun (ty, branch) ->
-          let+ branch = branch in (ty, branch)
-        )
-      in BMatch (id, branches)
-    }
   | ~ = expr2; <>
 
 let match_branch ==
@@ -176,8 +171,8 @@ let expr5 :=
 
 let literal :=
   | i = INTEGER; { pure (VInt i) }
-  | TRUE;        { pure VTrue }
-  | FALSE;       { pure VFalse }
+  | KW_TRUE;     { pure VTrue }
+  | KW_FALSE;    { pure VFalse }
   | LBRACE; fields = separated_list(SEMICOLON, record_field_literal); RBRACE;
     {
       let+ fields = sequence fields
