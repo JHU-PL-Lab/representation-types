@@ -5,8 +5,8 @@ open Classes
 module Basic_Ast (ValueWrapper : Comonad) (IdentWrapper : Comonad) =
 struct
 
-  module ValueWrapper = ValueWrapper
-  module IdentWrapper = IdentWrapper
+  module ValueWrapper = Comonad_Util(ValueWrapper)
+  module IdentWrapper = Comonad_Util(IdentWrapper)
 
   type ident = string IdentWrapper.t
 
@@ -43,7 +43,7 @@ struct
   
   module Basic_RValue (RValueWrapper : Comonad) =
   struct
-    module RValueWrapper = RValueWrapper
+    module RValueWrapper = Comonad_Util(RValueWrapper)
 
     type rvalue_spec =
       | RInt  of int

@@ -156,13 +156,14 @@ end
 
 module Comonad_Util (W : Comonad) = struct
   include W
+  include Functor_Util(W)
 
   let duplicate w = extend w (fun a -> a)
 
   module Syntax = struct
+    include Syntax
     let (=>>) = extend
     let (=>=) k1 k2 = fun w -> k2 (w =>> k1)
-
     let ( let@ ) = extend
   end
 end
@@ -315,6 +316,8 @@ module Applicative_Util (A : Applicative) = struct
   module Syntax = struct
     include Syntax
     let ( <*> ) = A.apply
+    let ( *> ) a1 a2 = (fun _ a2 -> a2) <$> a1 <*> a2
+    let ( <* ) a1 a2 = (fun a1 _ -> a1) <$> a1 <*> a2
     let ( and+ ) a1 a2 = (fun a b -> (a, b)) <$> a1 <*> a2
   end
 end
@@ -464,6 +467,7 @@ module Monad_Util (M : Monad) = struct
 
     let ( let* ) = M.bind
     let ( >>= ) = M.bind
+    let ( >> ) m1 m2 = m1 >>= fun _ -> m2
     let ( >=> ) f g = fun a -> f a >>= g
   end
 

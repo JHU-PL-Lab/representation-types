@@ -105,6 +105,9 @@ let expr0 :=
     }
   | ~ = expr1; <>
 
+let match_branch ==
+  separated_pair(pattern_type, ARROW, ssa)
+
 let expr1 :=
   | (e1, e2) = sep_pair(expr1, KW_AND, expr2); {
     let+ i1 = emit' e1
@@ -117,10 +120,6 @@ let expr1 :=
     in BOpr (OOr (i1, i2))
   }
   | ~ = expr2; <>
-
-let match_branch ==
-  separated_pair(pattern_type, ARROW, ssa)
-
 
 let expr2 :=
   | (e1, e2) = sep_pair(expr3, LTHAN, expr3); {

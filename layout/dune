@@ -10,7 +10,8 @@
       parser_util
       tests
       types
-      util)
+      util
+      util_pp)
    (libraries ppx_deriving)
    (preprocess
       (pps
