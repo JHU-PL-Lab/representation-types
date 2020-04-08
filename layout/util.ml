@@ -74,8 +74,10 @@ end
 
 
 module ID_Map = Map.Make(String)
-
 module ID_Set = Set.Make(String)
+
+module Int_Map = Map.Make(Int)
+module Int_Set = Set.Make(Int)
 
 module Type_Set = Set.Make(struct
   type t = Types.simple_type
@@ -83,7 +85,12 @@ module Type_Set = Set.Make(struct
 end)
 
 module ID_Set_Map = Map.Make(ID_Set)
+module Type_Set_Map = Map.Make(Type_Set)
 
+module Field_Tags_Map = Map.Make(struct
+  type t = int ID_Map.t
+  let compare = ID_Map.compare Int.compare
+end)
 
 
 module Set_Util (S : Set.S) = struct

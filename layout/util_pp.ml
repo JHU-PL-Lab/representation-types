@@ -52,15 +52,30 @@ let pp_id_set =
   let open Set_Pretty(ID_Set) in
   pp_set Format.pp_print_string
 
+let pp_int_set =
+  let open Set_Pretty(Int_Set) in
+  pp_set Format.pp_print_int
+
 let pp_type_set =
   let open Set_Pretty(Type_Set) in
   pp_set Types.pp_simple_type
 
-let pp_id_map fmt m =
+let pp_id_map pp_val =
   let open Map_Pretty(ID_Map) in
-  pp_map Format.pp_print_string fmt m
+  pp_map Format.pp_print_string pp_val
 
-let pp_id_set_map fmt m =
+let pp_int_map pp_val =
+  let open Map_Pretty(Int_Map) in
+  pp_map Format.pp_print_int pp_val
+
+let pp_id_set_map pp_val =
   let open Map_Pretty(ID_Set_Map) in
-  pp_map pp_id_set fmt m
+  pp_map pp_id_set pp_val
   
+let pp_type_set_map pp_val =
+  let open Map_Pretty(Type_Set_Map) in
+  pp_map pp_type_set pp_val
+
+let pp_field_tags_map pp_val =
+  let open Map_Pretty(Field_Tags_Map) in
+  pp_map (pp_id_map Format.pp_print_int) pp_val

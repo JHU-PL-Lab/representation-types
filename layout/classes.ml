@@ -557,6 +557,50 @@ struct
 end
 
 
+module Free (F : Functor) : sig
+  type 'a t =
+    | Pure of 'a | Join of 'a t F.t
+
+  include Monad with type 'a t := 'a t
+end =
+struct
+  type 'a t =
+    | Pure of 'a | Join of 'a t F.t
+
+  let rec map f =
+    function
+    | Pure a  -> Pure (f a)
+    | Join fa -> Join (F.map (map f) fa)
+
+  let pure a = Pure a
+
+  let rec bind a f =
+    match a with
+    | Pure a  -> f a
+    | Join fa -> Join (F.map (fun a -> bind a f) fa)
+
+  let apply ff fa =
+    bind ff (fun f -> map f fa)
+end
+
+
+module CoFree (F : Functor) : sig
+  type 'a t = CoFree of 'a * 'a t F.t
+  include Comonad with type 'a t := 'a t
+end =
+struct
+  type 'a t = CoFree of 'a * 'a t F.t
+  
+  let rec map f (CoFree (a, fs)) =
+    CoFree ((f a), F.map (map f) fs)
+
+  let extract (CoFree (a, _)) = a
+
+  let rec extend (CoFree (_, fs) as c) f =
+    CoFree (f c, F.map (fun c -> extend c f) fs)
+end
+
+
 module WriterF (T : sig type t end) : sig
   include Comonad     with type 'a t = T.t * 'a
   include Traversable with type 'a t = T.t * 'a
@@ -673,6 +717,26 @@ module State_Util (S : sig type t end) = struct
 end
 
 
+module Lazies : sig
+  type +'a t = 'a Lazy.t
+  include Monad   with type 'a t := 'a t
+  include Comonad with type 'a t := 'a t
+end =
+struct
+  type +'a t = 'a lazy_t
+
+  let map f a = lazy (f (Lazy.force a))
+
+  let pure a = lazy a
+
+  let apply f a = lazy (Lazy.force f (Lazy.force a))
+
+  let bind a f = lazy (Lazy.force (f (Lazy.force a)))
+
+  let extract a = Lazy.force a
+
+  let extend a f = lazy (f a)
+end
 
 
 module Lists : sig
@@ -787,7 +851,7 @@ struct
   type 'a t = 'a Seq.t
 
   let map f s = Seq.map f s
-  let pure a = Seq.return a
+  let rec pure a = fun () -> Seq.Cons(a, pure a)
   let bind s f = Seq.flat_map f s
 
   let rec apply fs ss () =
@@ -824,7 +888,7 @@ struct
 
   module Make_Foldable (M' : Monoid) = struct
     let fold_map am m =
-      M.fold (fun _ a m -> M'.append m (am a)) m M'.empty
+      M.fold (fun _ a m -> M'.append (am a) m) m M'.empty
   end
 
   module Make_Traversable (A : Applicative) = struct

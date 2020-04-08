@@ -1,7 +1,7 @@
 %{
 
   open Types
-  open Ast.Ast'
+  open Ast
   open Classes
 
   open Util
@@ -22,7 +22,7 @@
 %token KW_TRUE
 %token KW_FALSE
 
-%token <Ast.Ast'.ident> IDENTIFIER
+%token <Ast.ident> IDENTIFIER
 
 %token EOF
 
@@ -35,7 +35,7 @@
 %token KW_LET KW_IN KW_END KW_INT
 %token ALTERNATIVE ARROW
 
-%start <Ast.Ast'.expr> main
+%start <Ast.expr> main
 
 %%
 

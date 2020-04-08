@@ -62,7 +62,7 @@ let e5 = parse "
 
   let x1 = f { a = 10 } in
   let x2 = f { a = 10; b = 20 } in
-  let x3 = f { a = 10; c = 30 } in
+  let x3 = f { a = 10; c = 30; d = 50 } in
     x1 + x2 + x3
 "
 
@@ -125,11 +125,12 @@ let e8 = parse "
 
 (* test for pattern match subtyping depth requirement *)
 let e9 = parse "
-  match {} with
+  match {d = {f = 0}; e = 0} with
   | {b: {b: *}} -> 0
   | {a: {a: {a: *}; b: *}; b: *} -> 0
   | {a: *; b: *; c: *} -> 0
   | {b: *; c: *} -> 0
+  | {d: *; e: *} -> 0
   | * -> 0
   end
 "

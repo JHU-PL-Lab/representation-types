@@ -9,12 +9,11 @@ open Util
 module ID_Map = Map.Make(String)
 
 
-
 type parse_state =
   {
-    emitted   : Ast'.clause Diff_list.t;
-    fresh_cts : int        ID_Map.t;
-    fresh_env : Ast'.ident ID_Map.t;
+    emitted   : clause Diff_list.t;
+    fresh_cts : int   ID_Map.t;
+    fresh_env : ident ID_Map.t;
   }
 
 module PState = State_Util(struct type t = parse_state end)
@@ -30,7 +29,7 @@ include struct
       fresh_env = ID_Map.empty;
     }
 
-  let fresh id : Ast'.ident PState.t =
+  let fresh id : ident PState.t =
     fun ps ->
       let ct = Option.value ~default:0 @@
         ID_Map.find_opt id ps.fresh_cts in
@@ -71,7 +70,7 @@ include struct
   let emit' body =
     let* body = body in
     match body with
-    | Ast'.BVar id -> pure id
+    | BVar id -> pure id
     | _ ->
     let* id = fresh "" in
     let* () = emit @@ Cl (id, body) in
