@@ -76,6 +76,10 @@ let pp_type_set_map pp_val =
   let open Map_Pretty(Type_Set_Map) in
   pp_map pp_type_set pp_val
 
+let pp_type_tag_map pp_val =
+  let open Map_Pretty(Type_Tag_Map) in
+  pp_map Types.pp_type_tag pp_val
+
 let pp_field_tags_map pp_val =
   let open Map_Pretty(Field_Tags_Map) in
-  pp_map (pp_id_map Format.pp_print_int) pp_val
+  pp_map (pp_id_map Types.pp_type_tag) pp_val

@@ -87,9 +87,14 @@ end)
 module ID_Set_Map = Map.Make(ID_Set)
 module Type_Set_Map = Map.Make(Type_Set)
 
+module Type_Tag_Map = Map.Make(struct
+  type t = Types.type_tag
+  let compare = Types.compare_type_tag
+end)
+
 module Field_Tags_Map = Map.Make(struct
-  type t = int ID_Map.t
-  let compare = ID_Map.compare Int.compare
+  type t = Types.type_tag ID_Map.t
+  let compare = ID_Map.compare Types.compare_type_tag
 end)
 
 

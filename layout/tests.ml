@@ -134,3 +134,44 @@ let e9 = parse "
   | * -> 0
   end
 "
+
+(* worst case record tables *)
+let e10 = parse "
+  let f = fun r -> r in
+
+  (*
+    In absence of inlining of f, this
+    causes the types of x1..x3 to be
+    the same.
+  *)
+  let x1 = f true in
+  let x2 = f false in
+  let x3 = f true in
+
+  (*
+    Therefore although r only ever has type
+     {a: true; b: false; c: true},
+    it must create a retagging constructor
+    which maps each of the 2^3 possibilities.
+    All but one will be failure states.
+  *)
+  let r = { a = x1; b = x2; c = x3 } in
+
+  (*
+    On the other hand, because we know
+    r's more precise type, this match only
+    needs to store a table of size 1.
+    We could eliminate all other
+    branches semi-statically as dead code. 
+  *)
+  match r with
+  | { a: false; b: false; c: false } -> 0
+  | { a: false; b: false; c: true  } -> 1
+  | { a: false; b: true;  c: false } -> 2
+  | { a: false; b: true;  c: true  } -> 3
+  | { a: true;  b: false; c: false } -> 4
+  | { a: true;  b: false; c: true  } -> 5
+  | { a: true;  b: true;  c: false } -> 6
+  | { a: true;  b: true;  c: true  } -> 7
+  end
+"

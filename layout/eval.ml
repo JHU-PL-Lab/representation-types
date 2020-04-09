@@ -11,12 +11,9 @@ module Matching = struct
     type t = int ID_Map.t ID_Set_Map.t
   end)
 
-  module Lists = struct
-    include Traversable_Util(Lists)
-    include Make_Traversable(State)
-  end
+  open Traversable_Util(Lists)
+  open Make_Traversable(State)
 
-  open Lists
   open State
   open Syntax
 
@@ -39,7 +36,7 @@ module Matching = struct
     function
     | TRec record ->
       let shape = record |> List.map fst |> ID_Set.of_list in
-      let* field_depths = record |> Lists.traverse
+      let* field_depths = record |> traverse
         (fun (lbl, ty) -> let+ depth = visit_type ty in (lbl, depth)) in
       let field_depths' = field_depths |> List.to_seq |> ID_Map.of_seq in
       let rec_depth = field_depths |> List.map snd |> List.fold_left max 0 in
@@ -397,20 +394,14 @@ module Tagging = struct
         for each match program point: 
         a mapping from union type tag to branch taken.
       *)
-      match_tables : int Int_Map.t ID_Map.t;
+      match_tables : int Type_Tag_Map.t ID_Map.t;
       
       (*
         for each record construction program point:
         a mapping from per-field union type tags
         to the resulting union type tag for the record.
       *)
-      record_tables : int Field_Tags_Map.t ID_Map.t;
-    }
-
-  type tag =
-    {
-      t_id : int; (* type id *)
-      u_id : int; (* union element id *)
+      record_tables : type_tag Field_Tags_Map.t ID_Map.t;
     }
 
   module State = State_Util(struct
@@ -433,7 +424,7 @@ module Tagging = struct
     let+ type_ids = (fun s -> s.type_ids) <$> get in
     Int_Map.find tid type_ids
 
-  let tag_type tag =
+  let tag_type (Tag tag) =
     let+ type_ids = (fun s -> s.type_ids) <$> get in
     let ty = type_ids |> Int_Map.find tag.t_id in
     List.nth ty tag.u_id
@@ -442,14 +433,15 @@ module Tagging = struct
     let+ type_ids = (fun s -> s.type_ids) <$> get in
     type_ids
       |> Int_Map.find t_id
-      |> List.mapi (fun u_id _ -> { t_id; u_id; })
+      |> List.mapi (fun u_id _ -> Tag { t_id; u_id; })
 
 
-  let first_where f tys ty =
+  let first_where ~default f tys ty =
     tys |> List.mapi (fun i t -> (i, t))
-        |> List.find (fun (_, t) -> f ty t)
-        |> fst
-  
+        |> List.find_opt (fun (_, t) -> f ty t)
+        |> Option.map fst
+        |> Option.value ~default
+        
   let find_matching tys ty =
     first_where is_subtype_simple tys ty
 
@@ -472,8 +464,8 @@ module Tagging = struct
   and process_record pp record =
     let* records = record 
       |> traverse @@ fun (lbl, elt) ->
-          let* elt_ty   = type_id_of elt in
-          let+ elt_tags = tags_of_type elt_ty in
+          let* elt_tid  = type_id_of elt in
+          let+ elt_tags = tags_of_type elt_tid in
           List.map (fun tag -> (lbl, tag)) elt_tags
     in
     let records =
@@ -481,6 +473,7 @@ module Tagging = struct
       sequence records (* transpose the list of lists *)
       |> List.map (fun r -> r |> List.to_seq |> ID_Map.of_seq)
     in
+    let* ppt_id = type_id_of pp in
     let* ppt = type_of pp in
     let* field_maps =
       records |> traverse @@ fun record ->
@@ -488,9 +481,9 @@ module Tagging = struct
           ID_Map.bindings record |> traverse (fun (lbl, tag) ->
             let+ ty = tag_type tag in (lbl, ty)) 
         in
-        let fields = ID_Map.map (fun tag -> tag.u_id) record in
-        let result_u_id = find_retagging ppt (TRec rty) in
-          Field_Tags_Map.singleton fields result_u_id
+        let result_u_id = find_retagging ~default:(-1) ppt (TRec rty) in
+          Field_Tags_Map.singleton record
+            (Tag { t_id = ppt_id; u_id = result_u_id })
     in
     let field_map =
       field_maps |> List.fold_left
@@ -509,11 +502,11 @@ module Tagging = struct
     let* branch_maps =
       id_tags |> traverse (fun tag ->
         let+ ty = tag_type tag in
-        Int_Map.singleton tag.u_id (find_matching branch_tys ty)) in
+        Type_Tag_Map.singleton tag (find_matching ~default:(-1) branch_tys ty)) in
     let branch_map =
       branch_maps |> List.fold_left
-        (Int_Map.union (fun _ _ _ -> None)) (* safe, the maps are disjoint. *)
-        Int_Map.empty 
+        (Type_Tag_Map.union (fun _ _ _ -> None)) (* safe, the maps are disjoint. *)
+        Type_Tag_Map.empty 
     in
     modify (fun s -> { s with
       match_tables = s.match_tables
@@ -540,8 +533,8 @@ type full_analysis =
     result: RValue'.rvalue;
     pp_types: int ID_Map.t;
     type_ids: simple_type list Int_Map.t;
-    match_tables: int Int_Map.t ID_Map.t;
-    record_tables: int Field_Tags_Map.t ID_Map.t;
+    match_tables: int Type_Tag_Map.t ID_Map.t;
+    record_tables: type_tag Field_Tags_Map.t ID_Map.t;
   }
 
 let full_analysis_of test_case =
@@ -562,6 +555,12 @@ let full_analysis_of test_case =
     record_tables;
   }
   
+(*
+  The environment from interpretation
+  takes up way too much space when used
+  interactively via utop etc., so this
+  version just gets rid of it for convenience.
+*)
 let full_analysis_of' test_case =
   let f = full_analysis_of test_case in
   { f with

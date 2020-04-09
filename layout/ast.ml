@@ -35,7 +35,7 @@ and body =
 and clause = Cl of ident * body
 
 and expr = clause list
-and 't env = (ident * 't) list
+and ('k, 'v) env = ('k * 'v) list
 
 module Basic_RValue (RValueWrapper : Comonad) =
 struct
@@ -46,7 +46,7 @@ struct
     | RBool of bool
     
     | RRec  of (label * rvalue) list
-    | RFun  of rvalue env * ident * expr
+    | RFun  of (ident, rvalue) env * ident * expr
 
   and rvalue = rvalue_spec Wrapper.t
 
@@ -99,7 +99,7 @@ module Unwrap_RValue
     | RFun (env, id, body) ->
         RValue'.RFun (unwrap_env env, id, body)
 
-  and unwrap_env : rvalue env -> RValue'.rvalue env =
+  and unwrap_env : ('i, rvalue) env -> ('i, RValue'.rvalue) env =
     fun env ->
       List.map (fun (id, rval) -> (id, unwrap_rvalue rval)) env
 

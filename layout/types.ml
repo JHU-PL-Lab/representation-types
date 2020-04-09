@@ -36,7 +36,11 @@ type simple_type =
   | TBottom | TUniv | TRec of (label * simple_type) list
   [@@deriving show, eq, ord]
 
+type type_tag =
+  Tag of { t_id: int; u_id: int }
+  [@@deriving show, eq, ord]
 
+  
 let rec is_non_conflicting_simple (t1 : simple_type) (t2 : simple_type) : bool =
   match t1, t2 with
   |       _, TUniv
@@ -62,6 +66,12 @@ let rec is_instance_simple (t1 : simple_type) (t2 : simple_type) : bool =
   match t1, t2 with
   | _, TUniv -> true
   | TRec r1, TRec r2 ->
+      (* print_string (
+          (show_simple_type t1) ^ 
+          " ?= " ^
+          (show_simple_type t2) ^
+          "\n"
+      ); *)
       let r1' = List.fast_sort compare r1 in
       let r2' = List.fast_sort compare r2 in
       for_all2 r1' r2' (fun (l1, t1) (l2, t2) ->

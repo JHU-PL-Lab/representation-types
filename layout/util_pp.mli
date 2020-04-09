@@ -28,6 +28,11 @@ val pp_type_set_map :
   Format.formatter -> 'a Util.Type_Set_Map.t -> unit
   [@@ocaml.toplevel_printer]
 
+val pp_type_tag_map :
+  (Format.formatter -> 'a -> unit) ->
+  Format.formatter -> 'a Util.Type_Tag_Map.t -> unit
+  [@@ocaml.toplevel_printer]
+
 val pp_field_tags_map :
   (Format.formatter -> 'a -> unit) ->
   Format.formatter -> 'a Util.Field_Tags_Map.t -> unit

@@ -703,8 +703,10 @@ module State_Util (S : sig type t end) = struct
   let get : S.t State.t =
     fun s -> (s, s)
 
-  let put : S.t -> unit State.t =
-    fun s _ -> (s, ())
+  let gets f = map f get
+
+  let put s' : unit State.t =
+    fun _s -> (s', ())
   
   let control f f' (sa : 'a State.t) : 'a State.t =
     fun s ->
@@ -715,6 +717,90 @@ module State_Util (S : sig type t end) = struct
     fun s -> (f s, ())
 
 end
+
+
+module RWSI (W : Monoid) = struct
+
+  type ('r, 's1, 's2, 'a) ti =
+    'r -> 's1 -> 's2 * W.t * 'a
+
+  type ('r, 's, 'a) t = ('r, 's, 's, 'a) ti
+
+  let map f ma r s =
+    let (s', w, a) = ma r s in
+      (s', w, f a)
+
+  let pure a _r s =
+    (s, W.empty, a)
+
+  let apply mf ma r s =
+    let (s',  w,  f) = mf r s  in
+    let (s'', w', a) = ma r s' in
+     (s'', W.append w w', f a)
+
+  let bind ma fm r s =
+    let (s',  w,  a) = ma r s    in
+    let (s'', w', b) = fm a r s' in
+      (s'', W.append w w', b)
+end
+
+module RWS (R : sig type t end) (W : Monoid) (S : sig type t end)
+  : Monad with type 'a t = (R.t, S.t, 'a) RWSI(W).t
+= struct
+  include RWSI(W)
+  type 'a t = (R.t, S.t, 'a) RWSI(W).t
+end
+
+module RWS_Util (R : sig type t end) (W : Monoid) (S : sig type t end)
+= struct
+  module RWS = RWS(R)(W)(S)
+  include Monad_Util(RWS)
+
+  let get : S.t RWS.t =
+    fun _r s -> (s, W.empty, s)
+
+  let gets (f : S.t -> 'a) : 'a RWS.t
+    = map f get
+
+  let put s' : unit RWS.t =
+    fun _r _s -> (s', W.empty, ())
+
+  let modify f : unit RWS.t =
+    fun _r s -> (f s, W.empty, ())
+
+  let control f f' ma : unit RWS.t =
+    fun r s ->
+      let (s', w, a) = ma r (f s) in
+       (f' s s', w, a)
+
+  let ask : R.t RWS.t =
+    fun r s -> (s, W.empty, r)
+
+  let asks (f : R.t -> 'a) : 'a RWS.t 
+    = map f ask
+
+  let local f ma : unit RWS.t =
+    fun r s ->
+      ma (f r) s
+
+  let tell w : unit RWS.t =
+    fun _r s -> (s, w, ())
+
+  let pass (f : W.t -> W.t) (ma : 'a RWS.t) : 'a RWS.t =
+    fun r s ->
+      let (s', w, a) = ma r s in
+       (s', f w, a)
+
+  let listen (ma : 'a RWS.t) : ('a * W.t) RWS.t =
+    fun r s ->
+      let (s', w, a) = ma r s in
+       (s', w, (a, w))
+
+  let listen' (ma : unit RWS.t) : W.t RWS.t =
+    map snd (listen ma)
+
+end
+
 
 
 module Lazies : sig
@@ -736,6 +822,30 @@ struct
   let extract a = Lazy.force a
 
   let extend a f = lazy (f a)
+end
+
+
+module Units : sig
+  type 'a t = unit
+  include Monad       with type 'a t := 'a t
+  include Traversable with type 'a t := 'a t
+end = struct
+
+  type 'a t = unit
+
+  let map _ () = ()
+  let pure _ = ()
+  let apply () () = ()
+  let bind () _ = ()
+
+  module Make_Foldable (M : Monoid) = struct
+    let fold_map _ () = M.empty
+  end
+
+  module Make_Traversable (A : Applicative) = struct
+    let traverse _ () = A.pure ()
+  end
+
 end
 
 
