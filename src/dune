@@ -1,6 +1,6 @@
 (library
-   (name layout-types)
-   (public_name layout-types)
+   (name layout)
+   (public_name layout)
    (inline_tests (flags -verbose))
    (modules
       ast

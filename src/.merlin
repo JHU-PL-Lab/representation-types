@@ -21,7 +21,7 @@ B /home/dh/.opam/4.09.0/lib/ppxlib/traverse_builtins
 B /home/dh/.opam/4.09.0/lib/result
 B /home/dh/.opam/4.09.0/lib/sexplib0
 B /home/dh/.opam/4.09.0/lib/stdio
-B ../_build/default/layout/.layout.objs/byte
+B ../_build/default/src/.layout.objs/byte
 S /home/dh/.opam/4.09.0/lib/base
 S /home/dh/.opam/4.09.0/lib/base/base_internalhash_types
 S /home/dh/.opam/4.09.0/lib/base/caml
