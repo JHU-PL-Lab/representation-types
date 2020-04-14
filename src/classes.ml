@@ -1,6 +1,29 @@
 
 (*
 
+  SHOW
+
+*)
+
+module type Show = sig
+  type t
+    [@@deriving show]
+end
+
+(*
+
+  SHOW1
+
+*)
+
+module type Show1 = sig
+  type 'a t
+    [@@deriving show]
+end
+
+
+(*
+
   MONOIDS
 
 *)
@@ -69,8 +92,9 @@ struct
   let empty = true
 end
 
-module OptionMonoid (S : Semigroup)
-  : Monoid with type t = S.t option =
+module OptionMonoid (S : Semigroup) : sig
+  include Monoid with type t = S.t option
+end =
 struct
   type t = S.t option
 
@@ -331,6 +355,48 @@ struct
   let apply f a = F.apply (F.apply (F.pure G.apply) f) a
 end
 
+
+(*
+
+  ALTERNATIVES
+
+*)
+
+module type Alternative = sig
+  type 'a t
+  include Applicative with type 'a t := 'a t
+
+  val empty : 'a t
+  val append : 'a t -> 'a t -> 'a t
+end
+
+module Alternative_Util (A : Alternative) = struct
+  include A
+  include Applicative_Util(A)
+
+  let rec some (a : 'a t) : 'a list t =
+    let open Syntax in
+    (fun x xs -> x :: xs) <$> a <*> many a
+
+  and many (a : 'a t) : 'a list t =
+    append (some a) (pure [])
+
+  module Syntax = struct
+    include Syntax
+    let (<|>) = append
+  end
+end
+
+module ComposeAlt (F : Alternative) (G : Alternative)
+  : Alternative with type 'a t = 'a G.t F.t =
+struct
+  include ComposeA(F)(G)
+
+  let empty = F.empty
+  let append = F.append
+end
+
+
 (*
 
   TRAVERSABLES
@@ -505,10 +571,19 @@ struct
   let append s1 s2 = s1 ^ s2
 end
 
+module UnitM
+  : Monoid with type t = unit =
+struct
+  type t = unit
+  let empty = ()
+  let append () () = ()
+end
+
 module Identity : sig
-  include Monad       with type 'a t = 'a
-  include Comonad     with type 'a t = 'a
-  include Traversable with type 'a t = 'a
+  type +'a t = 'a
+  include Monad       with type 'a t := 'a t
+  include Comonad     with type 'a t := 'a t
+  include Traversable with type 'a t := 'a t
 end =
 struct
   type +'a t = 'a
@@ -768,7 +843,7 @@ module RWS_Util (R : sig type t end) (W : Monoid) (S : sig type t end)
   let modify f : unit RWS.t =
     fun _r s -> (f s, W.empty, ())
 
-  let control f f' ma : unit RWS.t =
+  let control f f' (ma : 'a RWS.t) : 'a RWS.t =
     fun r s ->
       let (s', w, a) = ma r (f s) in
        (f' s s', w, a)
@@ -829,8 +904,8 @@ module Units : sig
   type 'a t = unit
   include Monad       with type 'a t := 'a t
   include Traversable with type 'a t := 'a t
-end = struct
-
+end =
+struct
   type 'a t = unit
 
   let map _ () = ()
@@ -850,6 +925,7 @@ end
 
 
 module Lists : sig
+  include Alternative with type 'a t = 'a list
   include Monad       with type 'a t = 'a list
   include Traversable with type 'a t = 'a list
 end =
@@ -859,6 +935,9 @@ struct
   let pure a = [a]
   let bind a f = List.concat @@ List.map f a
   let apply fs aa = bind fs (fun f -> map f aa)
+
+  let empty = []
+  let append = (@)
 
   module Make_Foldable (M : Monoid) = struct
     let fold_map am l =
@@ -876,7 +955,7 @@ struct
   end
 end
 
-module NonEmpty : sig
+module NonEmpty : sig 
   include Monad       with type 'a t = 'a * 'a list
   include Comonad     with type 'a t = 'a * 'a list
   include Traversable with type 'a t = 'a * 'a list
@@ -927,6 +1006,7 @@ struct
 end
 
 module Options : sig
+  include Alternative with type 'a t = 'a option
   include Monad       with type 'a t = 'a option
   include Traversable with type 'a t = 'a option
 end =
@@ -936,6 +1016,10 @@ struct
   let pure a = Some(a)
   let bind a f = Option.bind a f
   let apply f a = bind f (fun f -> map f a)
+
+  let empty = None
+  let append o1 o2 =
+    match o1 with None -> o2 | _ -> o1
 
   module Make_Foldable (M : Monoid) = struct
     let fold_map am =
@@ -948,7 +1032,7 @@ struct
     let traverse ab =
       function
       | None    -> A.pure None
-      | Some(a) -> ab a |> A.map (fun b -> Some(b))
+      | Some(a) -> ab a |> A.map Option.some
   end
 end
 
@@ -1041,7 +1125,6 @@ struct
       A.map Array.of_list
       @@ L.traverse at
       @@ Array.to_list xs
-
   end
 
 end

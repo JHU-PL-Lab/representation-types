@@ -3,15 +3,15 @@ let parse s =
   Parser.main Lexer.read (Lexing.from_string s)
 
 
-(* basic operations *)
-let e1 = parse "
+(* 1 : basic operations *)
+let t1 = parse "
   let x = 10 in
   let y = 20 in
     x + y
 "
 
-(* closures *)
-let e2 = parse "
+(* 2 : closures *)
+let t2 = parse "
   let f1 = fun a1 -> fun a2 ->
     a1 + a2
   in
@@ -23,8 +23,8 @@ let e2 = parse "
     x3
 "
 
-(* records *)
-let e3 = parse "
+(* 3 : records *)
+let t3 = parse "
   let t = true in
   let f = false in
 
@@ -33,8 +33,8 @@ let e3 = parse "
     q
 "
 
-(* y-combinator *)
-let e4 = parse "
+(* 4 : y-combinator *)
+let t4 = parse "
   let y = fun f ->
     let o = fun x -> f (fun arg -> x x arg)
     in o o   
@@ -50,8 +50,8 @@ let e4 = parse "
   sum 10
 "
 
-(* records and pattern matching *)
-let e5 = parse "
+(* 5 : records and pattern matching *)
+let t5 = parse "
   let f = fun x ->
     match x with
     | {a: int; b: int} -> x.b
@@ -66,8 +66,8 @@ let e5 = parse "
     x1 + x2 + x3
 "
 
-(* polymorphic record field projections *)
-let e6 = parse "
+(* 6 : polymorphic record field projections *)
+let t6 = parse "
   let f = fun r ->
     { a = r.a }
   in
@@ -80,7 +80,7 @@ let e6 = parse "
 "
 
 (* building and folding a list *)
-let e7 = parse "
+let t7 = parse "
   let y = fun f ->
     let o = fun x -> f (fun arg -> x x arg)
     in o o   
@@ -104,7 +104,7 @@ let e7 = parse "
 "
 
 (* test for match pattern depth calculation *)
-let e8 = parse "
+let t8 = parse "
   match {} with
   (* {a} -> {a -> 3} *)
   | { a: { a: { a: * } } } -> 0 
@@ -124,7 +124,7 @@ let e8 = parse "
 "
 
 (* test for pattern match subtyping depth requirement *)
-let e9 = parse "
+let t9 = parse "
   match {d = {f = 0}; e = 0} with
   | {b: {b: *}} -> 0
   | {a: {a: {a: *}; b: *}; b: *} -> 0
@@ -136,7 +136,7 @@ let e9 = parse "
 "
 
 (* worst case record tables *)
-let e10 = parse "
+let t10 = parse "
   let f = fun r -> r in
 
   (*
@@ -175,3 +175,33 @@ let e10 = parse "
   | { a: true;  b: true;  c: true  } -> 7
   end
 "
+
+let%test_module "interpreter validation" = (module struct
+  
+  let test_equal_result expr =
+    let open Eval in
+    let analysis = full_analysis_of expr in
+    let (_, rv) = TaggedEvaluator.eval expr analysis in
+    (analysis.result = rv) 
+
+  let%test "t1 (basic operations)" = test_equal_result t1
+  
+  let%test "t2 (closures)" = test_equal_result t2
+
+  let%test "t3 (records)" = test_equal_result t3
+
+  let%test "t4 (y-combinator)" = test_equal_result t4
+
+  let%test "t5 (patterns)" = test_equal_result t5
+
+  let%test "t6 (projections)" = test_equal_result t6
+
+  let%test "t7 (making/folding lists)" = test_equal_result t7
+
+  let%test "t8 (match depth calculation)" = test_equal_result t8
+
+  let%test "t9 (match subtype depth)" = test_equal_result t9
+
+  let%test "t10 (exponential record table)" = test_equal_result t10
+  
+end)

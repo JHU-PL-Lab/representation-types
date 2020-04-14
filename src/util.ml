@@ -84,6 +84,11 @@ module Type_Set = Set.Make(struct
   let compare = Types.compare_simple_type
 end)
 
+module Type_Map = Map.Make(struct
+  type t = Types.simple_type
+  let compare = Types.compare_simple_type
+end)
+
 module ID_Set_Map = Map.Make(ID_Set)
 module Type_Set_Map = Map.Make(Type_Set)
 

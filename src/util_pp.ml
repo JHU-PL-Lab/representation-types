@@ -60,6 +60,10 @@ let pp_type_set =
   let open Set_Pretty(Type_Set) in
   pp_set Types.pp_simple_type
 
+let pp_type_map pp_val =
+  let open Map_Pretty(Type_Map) in
+  pp_map Types.pp_simple_type pp_val
+
 let pp_id_map pp_val =
   let open Map_Pretty(ID_Map) in
   pp_map Format.pp_print_string pp_val
