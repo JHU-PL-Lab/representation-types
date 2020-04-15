@@ -8,3 +8,4 @@ interpreter
 setinterpreter
 
 _build/
+.merlin
