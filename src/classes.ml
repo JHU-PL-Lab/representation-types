@@ -1,38 +1,29 @@
 
-(*
-
-  SHOW
-
+(**
+  Definitions of various useful design patterns
+  modeled after various Haskell typeclasses,
+  and useful for monads and more.
 *)
 
-module type Show = sig
-  type t
-    [@@deriving show]
-end
 
-(*
+(** {1 Semigroups} *)
 
-  SHOW1
+(**
+  Types whose values can be combined
+  in a regular manner.
 
+  Requires that {!Semigroup.append} is associative,
+  to be true to form.
 *)
-
-module type Show1 = sig
-  type 'a t
-    [@@deriving show]
-end
-
-
-(*
-
-  MONOIDS
-
-*)
-
 module type Semigroup = sig
   type t
   val append : t -> t -> t
 end
 
+(**
+  Easily-derived helper definitions to be
+  attached to a {!Semigroup} implementation.
+*)
 module SemigroupUtil (S : Semigroup) = struct
   include S
   module Syntax = struct 
@@ -40,26 +31,50 @@ module SemigroupUtil (S : Semigroup) = struct
   end
 end
 
+(**
+  The trivial semigroup which
+  always takes the first operand.
+*)
+module First (T : sig type t end)
+  : Semigroup with type t = T.t =
+struct
+  include T
+  let append t1 _ = t1
+end
+
+(**
+  The trivial semigroup which
+  always takes the last operand.
+*)
+module Last (T : sig type t end)
+  : Semigroup with type t = T.t =
+struct
+  include T
+  let append _ t2 = t2
+end
+
+(** {1 Monoids} *)
+
+(**
+  Types which form a {!Semigroup}, and
+  which additionally have some zero element.
+
+  Requires that
+  {[
+    Monoid.append m Monoid.empty = m
+    Monoid.append Monoid.empty m = m
+  ]}
+*)
 module type Monoid = sig
   type t
   include Semigroup with type t := t
   val empty : t
 end
 
-module First (T : sig type t val empty : t end)
-  : Monoid with type t = T.t =
-struct
-  include T
-  let append t1 _ = t1
-end
-
-module Last (T : sig type t val empty : t end)
-  : Monoid with type t = T.t =
-struct
-  include T
-  let append _ t2 = t2
-end
-
+(**
+  The "dual" of the provided monoid,
+  which appends elements in the opposite order.
+*)
 module Dual (M : Monoid)
   : Monoid with type t = M.t =
 struct
@@ -68,6 +83,9 @@ struct
   let append m1 m2 = M.append m2 m1
 end
 
+(**
+  The monoid on endomorphisms ['a -> 'a].
+*)
 module Endo (T : sig type t end)
   : Monoid with type t = T.t -> T.t =
 struct
@@ -76,6 +94,9 @@ struct
   let append f1 f2 = (fun t -> f1 (f2 t))
 end
 
+(**
+  The monoid given by booleans and disjunction.
+*)
 module BooleanMonoid_Any
   : Monoid with type t = bool =
 struct
@@ -84,6 +105,9 @@ struct
   let empty = false
 end
 
+(**
+  The monoid given by booleans and conjunction.
+*)
 module BooleanMonoid_All
   : Monoid with type t = bool =
 struct
@@ -92,9 +116,14 @@ struct
   let empty = true
 end
 
-module OptionMonoid (S : Semigroup) : sig
-  include Monoid with type t = S.t option
-end =
+(**
+  For any semigroup [S], [S.t option] forms
+  a monoid such that {!None} is the empty
+  element and others are combined according
+  to [S.append].
+*)
+module OptionMonoid (S : Semigroup)
+  : Monoid with type t = S.t option =
 struct
   type t = S.t option
 
@@ -108,7 +137,12 @@ struct
   let empty = None
 end
 
-
+(**
+  For any element type [t], [t list] is
+  the so-called "free monoid" for [t], using
+  concatenation for append and the empty list
+  as the zero element.
+*)
 module ListMonoid (T : sig type t end)
   : Monoid with type t = T.t list =
 struct
@@ -117,17 +151,22 @@ struct
   let empty = []
 end
 
-(*
+(** {1 Functors} *)
 
-  FUNCTORS
-
+(**
+  Types which can be mapped over in some sense.
+  Regular functions can be lifted to operate over
+  elements of a functor with {!Functor.map}.
 *)
-
 module type Functor = sig
   type 'a t
   val map : ('a -> 'b) -> 'a t -> 'b t
 end
 
+(**
+  Easily-derived helper definitions to be
+  attached to a {!Functor} implementation.
+*)
 module Functor_Util (F : Functor) = struct
   include F
   module Syntax = struct
@@ -136,6 +175,10 @@ module Functor_Util (F : Functor) = struct
   end
 end
 
+(**
+  Given any two functors [F] and [G],
+  their composition is also a functor.
+*)
 module Compose (F : Functor) (G : Functor)
   : Functor with type 'a t = 'a G.t F.t =
 struct
@@ -143,6 +186,10 @@ struct
   let map f a = F.map (G.map f) a
 end
 
+(**
+  Given any two functors [F] and [G],
+  their disjoint sum is also a functor.
+*)
 module Sum (F : Functor) (G : Functor)
 : sig
     type 'a t = | InL of 'a F.t | InR of 'a G.t
@@ -157,6 +204,10 @@ end
     | InR ga -> InR (G.map f ga)
 end
 
+(**
+  Two functors are said to be distributive if
+  one can commute the two type constructors.
+*)
 module Distributive (F : Functor) (G : Functor) =
 struct
   module type Inst = sig
@@ -164,12 +215,13 @@ struct
   end
 end
 
-(*
+(** {1 Comonads} *)
 
-  COMONADS
-
+(**
+  Functors which additionally allow operations to
+  view enclosing (even non-local) structure in their mapping operations,
+  or throw away the additional structure for the internal value
 *)
-
 module type Comonad = sig
   type 'a t
   include Functor with type 'a t := 'a t
@@ -178,6 +230,10 @@ module type Comonad = sig
   val extend : 'a t -> ('a t -> 'b) -> 'b t
 end
 
+(**
+  Easily-derived helper definitions to be
+  attached to a {!Comonad} implementation.
+*)
 module Comonad_Util (W : Comonad) = struct
   include W
   include Functor_Util(W)
@@ -192,6 +248,10 @@ module Comonad_Util (W : Comonad) = struct
   end
 end
 
+(**
+  Given any two comonads [F] and [G],
+  their disjoint sum is also a comonad.
+*)
 module SumC (F : Comonad) (G : Comonad)
   : Comonad with type 'a t = 'a Sum(F)(G).t =
 struct
@@ -207,6 +267,10 @@ struct
     map (fun _ -> f sa) sa
 end
 
+(**
+  If two comonads [F] and [G] are {!Distributive},
+  then their composition is also a comonad.
+*)
 module ComposeC (F : Comonad) (G : Comonad) (D : Distributive(G)(F).Inst)
   : Comonad with type 'a t = 'a G.t F.t =
 struct
@@ -223,67 +287,116 @@ struct
 end
 
 
-(*
+(** {1 Foldables} *)
 
-  FOLDABLES
-
+(**
+  Functors which can be reduced by applying
+  monoidal actions over their internal structure.
 *)
-
 module type Foldable = sig
   type 'a t
   include Functor with type 'a t := 'a t
 
+  (**
+    Given a particular {!Monoid},
+    provide a means to reduce our structure to it.
+  *)
   module Make_Foldable (M : Monoid) : sig
     val fold_map : ('a -> M.t) -> 'a t -> M.t
   end
 end
 
+
+(**
+  Easily-derived helper definitions to be
+  attached to a {!Foldable} implementation.
+*)
 module Foldable_Util (F : Foldable) = struct
   include F
   include Functor_Util(F)
 
+  (**
+    A version of {!Foldable.Make_Foldable.fold_map}
+    which can take a first-class module for [M].
+  *)
   let fold_map
     : type m. (module Monoid with type t = m) -> ('a -> m) -> ('a F.t) -> m =
     fun (module M) f fs ->
       let module F = F.Make_Foldable(M) in
       F.fold_map f fs
 
+  (**
+    Equivalent to [fold_map] with the identity.
+  *)
   let fold m fs = fold_map m (fun m -> m) fs
 
+  (**
+    Right-associated fold of a binary operation.
+  *)
   let foldr : type a b. (a -> b -> b) -> b -> a F.t -> b =
     fun abb b0 fa ->
       let module Endo = Endo(struct type t = b end) in
       fold_map (module Endo) abb fa b0
 
+  (**
+    Left-associated fold of a binary operation
+  *)
   let foldl : type a b. (b -> a -> b) -> b -> a F.t -> b =
     fun bab b0 fa ->
     let module Endo = Endo(struct type t = b end) in
     let abb a b = bab b a in
       fold_map (module Dual(Endo)) abb fa b0
 
+  (**
+    Simulate a right-associated fold with {!foldl}
+  *)
   let foldr' : type a b. (a -> b -> b) -> b -> a F.t -> b =
     fun abb b0 fa ->
       let f' k a b = let b = abb a b in k b in
       foldl f' (fun x -> x) fa b0
       
+  (**
+    Simulate a left-associated fold with {!foldr}
+  *) 
   let foldl' : type a b. (b -> a -> b) -> b -> a F.t -> b =
     fun bab b0 fa ->
       let f' a k b = let b = bab b a in k b in
       foldr f' (fun x -> x) fa b0
 
+  (**
+    Determine whether some {!Foldable} is empty.
+  *)
   let is_empty fa =
     foldr (fun _ _ -> false) true fa
 
+  (**
+    Find the length of some {!Foldable}.
+  *)
   let length fa =
     foldl' (fun c _ -> c + 1) 0 fa
 
+  (**
+    Convert some {!Foldable} functor to a list.
+  *)
   let to_list fa =
     foldr (fun x xs -> x :: xs) [] fa
 
+  (**
+    Check if {!any} element in the {!Foldable} satisfies some predicate.
+  *)
   let any p fb = fold_map (module BooleanMonoid_Any) p fb
+
+  (**
+    Check if {!all} elements in the {!Foldable} satisfy some predicate.
+  *)
   let all p fb = fold_map (module BooleanMonoid_All) p fb
+
 end
 
+(**
+  For any foldables [F] and [G],
+  their composition is also foldable.
+*)
 module ComposeF (F : Foldable) (G : Foldable)
   : Foldable with type 'a t = 'a G.t F.t =
 struct
@@ -296,6 +409,10 @@ struct
   end
 end
 
+(**
+  For any foldables [F] and [G],
+  their disjoint sum is also foldable.
+*)
 module SumF (F : Foldable) (G : Foldable)
   : Foldable with type 'a t = 'a Sum(F)(G).t =
 struct
@@ -312,19 +429,13 @@ struct
   end
 end
 
-module NaturalTransformation (F : Functor) (G : Functor) =
-struct
-  module type Inst = sig
-    val transform : 'a F.t -> 'a G.t
-  end
-end
+(** {1 Applicative Functors} *)
 
-(*
-
-  APPLICATIVES
-
+(**
+  Functors which additionally admit pure
+  values to be added to a context with {!Applicative.pure},
+  and for contexts to be combined with {!Applicative.apply}.
 *)
-
 module type Applicative = sig
   type 'a t
   include Functor with type 'a t := 'a t
@@ -333,6 +444,10 @@ module type Applicative = sig
   val apply : ('a -> 'b) t -> 'a t -> 'b t
 end
 
+(**
+  Easily-derived helper definitions to be
+  attached to a {!Applicative} implementation.
+*)
 module Applicative_Util (A : Applicative) = struct
   include A
   include Functor_Util(A)
@@ -346,6 +461,10 @@ module Applicative_Util (A : Applicative) = struct
   end
 end
 
+(**
+  For any applicative functors [F] and [G],
+  their composition is also an applicative functor.
+*)
 module ComposeA (F : Applicative) (G : Applicative)
   : Applicative with type 'a t = 'a G.t F.t =
 struct
@@ -356,12 +475,12 @@ struct
 end
 
 
-(*
+(** {1 Alternative Functors} *)
 
-  ALTERNATIVES
-
+(**
+  Applicative functors which themselves have
+  some sort of monoidal structure.
 *)
-
 module type Alternative = sig
   type 'a t
   include Applicative with type 'a t := 'a t
@@ -370,6 +489,10 @@ module type Alternative = sig
   val append : 'a t -> 'a t -> 'a t
 end
 
+(**
+  Easily-derived helper definitions to be
+  attached to a {!Alternative} implementation.
+*)
 module Alternative_Util (A : Alternative) = struct
   include A
   include Applicative_Util(A)
@@ -387,6 +510,11 @@ module Alternative_Util (A : Alternative) = struct
   end
 end
 
+(**
+  Given any two alternative applicative functors [F] and [G],
+  their composition is also an alternative applicative functor.
+  (this definition just delegates to the outer functor's implementation).
+*)
 module ComposeAlt (F : Alternative) (G : Alternative)
   : Alternative with type 'a t = 'a G.t F.t =
 struct
@@ -397,12 +525,13 @@ struct
 end
 
 
-(*
+(** {1 Traversables} *)
 
-  TRAVERSABLES
-
+(**
+  Foldables which can distribute their internal
+  structure through a given {!Applicative} functor,
+  to sequence the underlying {!Applicative} effects.
 *)
-
 module type Traversable = sig
   type 'a t
   include Foldable with type 'a t := 'a t

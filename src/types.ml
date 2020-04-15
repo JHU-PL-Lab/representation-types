@@ -36,8 +36,11 @@ type simple_type =
   | TBottom | TUniv | TRec of (label * simple_type) list
   [@@deriving show, eq, ord]
 
+type type_id = int [@@deriving show, eq, ord]
+type union_id = int [@@deriving show, eq, ord]
+
 type type_tag =
-  Tag of { t_id: int; u_id: int }
+  Tag of { t_id: type_id; u_id: union_id }
   [@@deriving show, eq, ord]
 
   

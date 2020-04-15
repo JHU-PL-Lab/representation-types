@@ -1,4 +1,8 @@
 
+(**
+  Primary analysis tools and evaluators.
+*)
+
 open Ast
 open Classes
 open Types
@@ -42,7 +46,7 @@ module Matching = struct
     fields has at least the depth required
     by [field_depths]. 
   *)
-  let update_depths shape field_depths =
+  let update_depths shape field_depths : unit State.t =
     State.modify @@ ID_Set_Map.update shape
       begin function
       | None -> Some(field_depths)
@@ -80,7 +84,7 @@ module Matching = struct
     and subexpressions in the form of match branches and
     function bodies.
   *)
-  let rec visit_body =
+  let rec visit_body : Ast.body -> unit State.t =
     function
     | BVal (VFun (_, expr)) -> visit_expr expr
 
@@ -103,13 +107,14 @@ module Matching = struct
   (**
     Visit the {{!Layout.Ast.body} body} associated with the clause.
   *)
-  and visit_clause (Cl (_, body)) = visit_body body
+  and visit_clause (Cl (_, body)) : unit State.t = 
+    visit_body body
 
   (**
     Walk over the AST of the expression, visiting
     each {{!Layout.Ast.clause} clause}.
   *)
-  and visit_expr expr =
+  and visit_expr expr : unit State.t =
     traverse visit_clause expr >>
     State.pure ()
         
@@ -171,19 +176,11 @@ module FlowTracking = struct
     to facilitate the construction of the flow graph. 
   *)
   type flow_tag =
-    | Original
-    (** 
-      Indicating values which result from an arithmetic or
-      logical operator, and so do not depend on any program point.
-    *)
-    | Source of Ast.ident
-    (**
-      Indicating values which have most recently passed through
-      the program point contained by [Source].
-    *)
+    | Original (** Indicating values which have no program point source. *)
+    | Source of Ast.ident (** Indicating values which have the source associated. *)
 
   (**
-    RValues paired with their data source.
+    RValues paired with a {{!flow_tag} flow_tag}
   *)
   module RValue = RValue(WriterF(struct
     type t = flow_tag
@@ -214,10 +211,10 @@ module FlowTracking = struct
   *)
   type flow_state =
     {
-      env       : rvalue env; (** foo *)
-      data_flow : ID_Set.t ID_Map.t;
-      type_flow : Type_Set.t ID_Map.t;
-      shape_depths : Matching.shape_depth_t;
+      env       : rvalue env;                (** Values in scope *)
+      data_flow : ID_Set.t ID_Map.t;         (** The data dependency graph *)
+      type_flow : Type_Set.t ID_Map.t;       (** Runtime type observations *)
+      shape_depths : Matching.shape_depth_t; (** The match depths used *)
     }
 
   module State = State_Util(struct type t = flow_state end)
@@ -226,46 +223,93 @@ module FlowTracking = struct
   open Traversable_Util(Lists)
   open Make_Traversable(State)
 
-
+  (**
+    Helper function to throw the desired exception
+    when a {!Match_failure} occurs, to simplify the control
+    flow when defining the operator semantics, etc.
+  *)
   let protect e f v =
     try f v with | Match_failure (_, _, _) -> raise e
 
+  (** {!protect} in the form of a let-operator. *)
   let ( let$ ) v f =
     protect Type_Mismatch f v
 
-  let ( let$+ ) v f =
+  (** 
+    {!protect} + mapping over a monadic action. 
+    (like {{!Layout.Classes.Functor_Util.Syntax.val-let+} let+}) 
+  *)
+  let ( let$+ ) (v : _ State.t) f : _ State.t =
     protect Type_Mismatch f <$> v
 
-  let ( let$* ) v f =
+  (** 
+    {!protect} + binding a monadic action. 
+    (like {{!Layout.Classes.Monad_Util.Syntax.val-let*} let*})
+  *)
+  let ( let$* ) (v : _ State.t) (f : _ -> _ State.t) : _ State.t =
     v >>= protect Type_Mismatch f
 
-
-  let original rval' : rvalue State.t =
+  (** 
+    Convenience operator to tag an rvalue with the {!constructor-Original} tag. 
+  *)
+  let original (rval' : rvalue_spec) : rvalue State.t =
     State.pure (Original, rval')
 
+  (**
+    Convenience operator to re-tag an rvalue with the given {!constructor-Source}.
+  *)
   let retag_rvalue id : rvalue -> rvalue =
     fun (_, rval') -> (Source(id), rval')
 
+  (**
+    Convenience operator to retrieve the environment
+    from the state
+  *)
   let get_env : rvalue env State.t =
     State.gets (fun s -> s.env)
 
+  (**
+    Compute the type of an rvalue to the
+    required depth as queried from the state
+    (using {!type_of_shape}).
+  *)
   let type_of' rv : simple_type State.t =
     let+ depths = State.gets (fun s -> s.shape_depths) in
     canonicalize_simple @@ type_of_shape depths rv
 
-  let use_env env' =
+  (**
+    Given a new environment to operate in,
+    run the provided stateful action within it,
+    then revert the environment while keeping
+    the data and type flow information.
+  *)
+  let use_env env' : 'a State.t -> 'a State.t =
     State.control
       (fun s    -> { s  with env = env'  })
       (fun s s' -> { s' with env = s.env })
 
+  (**
+    Look up an rvalue by name in the environment
+  *)
   let lookup id : rvalue State.t =
     let+ env = get_env in
     match List.assoc_opt id env with
     | None    -> raise Open_Expression
     | Some(v) -> v
 
-  let lookup' id = Wrapper.extract <$> lookup id
+  (**
+    Look up an rvalue, and then {{!Layout.Classes.Comonad.extract} unwrap} it
+    so we don't have to pattern match on the tag etc.
+  *)
+  let lookup' id : rvalue_spec State.t = 
+    Wrapper.extract <$> lookup id
 
+  (**
+    Perform any updates to the dependency graph and
+    type observations which should result from
+    the provided program point receiving the given
+    rvalue as input.
+  *)
   let register_flow dest rval : unit State.t =
     let (origin, _) = rval in
     let update_dflow f =
@@ -290,6 +334,9 @@ module FlowTracking = struct
       type_flow = update_tflow s.type_flow;
     })
 
+  (**
+    Convert a given {!type-Layout.Ast.value} into an rvalue
+  *)
   let eval_value v : rvalue State.t =
     match v with
     | VInt i -> original @@ RInt i
@@ -306,7 +353,9 @@ module FlowTracking = struct
       in
         original @@ RRec record'
 
-
+  (**
+    Evaluate a given {!type-Layout.Ast.operator} expression.
+  *)
   let [@warning "-8"] eval_op o : rvalue State.t =
     match o with
     | OPlus (i1, i2) ->
@@ -343,7 +392,9 @@ module FlowTracking = struct
         let$* RBool r1 = lookup' i1 in
          original @@ RBool (not r1)
 
-
+  (**
+    Evaluate a {{!Layout.Ast.body.BProj} projection} expression.
+  *)
   let [@warning "-8"] eval_proj id lbl : rvalue State.t =
     let$+ RRec record = lookup' id in
     match List.assoc_opt lbl record with
@@ -351,6 +402,9 @@ module FlowTracking = struct
     | Some(v)  -> v
 
 
+  (**
+    Evaluate an {{!Layout.Ast.body.BApply} application} expression.
+  *)
   let rec eval_apply id1 id2 =
     begin [@warning "-8"]
       let$* RFun (env, id, expr) = lookup' id1 in
@@ -360,6 +414,9 @@ module FlowTracking = struct
         use_env ((id, retag_rvalue id v2) :: env) @@ eval_f expr
     end
 
+  (**
+    Evaluate the {{!Layout.Ast.body} body} of a clause.
+  *)
   and eval_body =
     function
     | BVar id -> lookup id
@@ -376,7 +433,10 @@ module FlowTracking = struct
         | None -> raise Match_Fallthrough
         | Some((_, expr')) -> eval_f expr'
 
-  and eval_f expr =
+  (**
+    Evaluate an {{!Layout.Ast.expr} expression}.
+  *)
+  and eval_f (expr : Ast.expr) =
     match expr with
     | [] -> raise Empty_Expression
     | Cl (id, body) :: cls ->
@@ -390,6 +450,11 @@ module FlowTracking = struct
     then State.pure body_value'
     else eval_f cls
 
+  (**
+    Entrypoint to the other evaluation functions;
+    This sets up the initial state as required
+    (Including calling {!Matching.find_required_depths}).
+  *)
   let eval expr =
     eval_f expr {
       env = [];
@@ -400,9 +465,22 @@ module FlowTracking = struct
 
 end
 
-
+(**
+  A small module to enclose the functionality
+  required regarding unification of program point types
+  and closure over the data dependency graph.
+  In so doing we also create a representation of union types
+  in the form of ordered sets of {!Types.simple_type}s.
+*)
 module Typing = struct
 
+  (**
+    Given an existing assignment of
+    union types (in the form of {!Util.Type_Set.t}) to program
+    points, produces a pair of mappings
+    - from type IDs ({!int}s) to union types ({!Util.Type_Set.t}),
+    - from program points to type IDs.
+  *)
   let assign_unique_type_ids
     (type_flow : Type_Set.t ID_Map.t) =
     let open struct
@@ -431,7 +509,17 @@ module Typing = struct
 
     in (type_ids, ids_type)
 
+  (**
+    Simple type closure treating the dependency graph
+    as undirected. This takes in the data dependencies
+    and the observed types, and produces a more generalized
+    mapping of program points to union types which ensures
+    the types will be compatible across dependent program points.
 
+    This simple algorithm merely performs union-find over
+    every edge in the graph, building up a set of simple
+    types in the process.
+  *)
   let type_flow_closure
     (data_flow : ID_Set.t   ID_Map.t)
     (type_flow : Type_Set.t ID_Map.t) =
@@ -445,7 +533,15 @@ module Typing = struct
           | None         -> ()));
       tflow_uf |> ID_Map.map Union_find.find
 
+  (**
+    Given type and data dependency information, 
+    compute the dependency closure and thereby a pair of mappings from
+    - type IDs ({!int}s) to {i ordered} unions ({!Types.simple_type}{!type-list}s)
+    - program points to type IDs.
 
+    The ordering of the union lists defines the tag which will
+    be assigned to each {!Types.simple_type} which is a member.
+  *)
   let assign_program_point_types
     (data_flow : ID_Set.t ID_Map.t)
     (type_flow : Type_Set.t ID_Map.t) =
@@ -458,84 +554,146 @@ module Typing = struct
 
 end
 
-
+(**
+  Once a universe of ordered union types has been established,
+  this module pre-computes tables for performing O(1) record
+  re-tagging and match branch choices. These provide (some of) the primary
+  runtime speed improvements over the untagged interpretation strategy.
+*)
 module Tagging = struct
 
+  (**
+    The input data we need is precisely the pair of
+    mappings given and described by the {!Eval.Typing} module.
+  *)
   type type_data =
     {
-      type_ids : simple_type list Int_Map.t;
-      pp_types : int ID_Map.t;
+      type_ids : simple_type list Int_Map.t; (** The Universe *)
+      pp_types : int ID_Map.t;               (** Inferred Types *)
     }
 
+  (**
+    The data we build up and output. Here, the state monad
+    is used for convenience to form a very general fold over
+    the AST to find all match and record usages.
+  *)
   type tag_state =
     {
-      (*
-        for each match program point: 
+      match_tables : int Type_Tag_Map.t ID_Map.t;
+      (**
+        For each match program point: 
         a mapping from union type tag to branch taken.
       *)
-      match_tables : int Type_Tag_Map.t ID_Map.t;
       
-      (*
-        for each record construction program point:
+      record_tables : type_tag Field_Tags_Map.t ID_Map.t;
+      (**
+        For each record construction program point:
         a mapping from per-field union type tags
         to the resulting union type tag for the record.
       *)
-      record_tables : type_tag Field_Tags_Map.t ID_Map.t;
     }
   
 
+  (**
+    Using the Reader-Writer-State monad stack
+    for convenience of separating the input
+    and state data types. We don't need the Writer
+    functionality so we stub in the unit monoid.
+  *)
   module State = RWS_Util
     (struct type t = type_data end)
     (UnitM)
     (struct type t = tag_state end)
   
 
-  open State
-  open Syntax
+  open State.Syntax
   
   open Traversable_Util(Lists)
   open Make_Traversable(State)
   
-  
-  let type_id_of pp =
-    let+ pp_types = asks (fun s -> s.pp_types) in
+  (**
+    Lookup the type ID associated to a program point.
+  *)
+  let type_id_of (pp : ident) : int State.t =
+    let+ pp_types = State.asks (fun s -> s.pp_types) in
     ID_Map.find pp pp_types  
 
-  let type_of' pp =
+  (**
+    Lookup the type ID {i and} ordered union associated
+    with a program point.
+  *)
+  let type_of' (pp : ident) : (int * simple_type list) State.t =
     let* tid = type_id_of pp in
-    let+ type_ids = asks (fun s -> s.type_ids) in
+    let+ type_ids = State.asks (fun s -> s.type_ids) in
     (tid, Int_Map.find tid type_ids)
+  
+  (**
+    Lookup the ordered union type associated with
+    a program point.
+  *)
+  let type_of (pp : ident) : simple_type list State.t = 
+    snd <$> type_of' pp
 
-  let type_of pp = snd <$> type_of' pp
-
-  let tag_type (Tag tag) =
-    let+ type_ids = asks (fun s -> s.type_ids) in
+  (**
+    Get the unique {!Types.simple_type} associated
+    with the given type tag.
+  *)
+  let tag_type (Tag tag) : simple_type State.t =
+    let+ type_ids = State.asks (fun s -> s.type_ids) in
     let ty = type_ids |> Int_Map.find tag.t_id in
     List.nth ty tag.u_id
 
-  let tags_of_type t_id =
-    let+ type_ids = asks (fun s -> s.type_ids) in
+  (**
+    Get a list of all tags which represent
+    entries in the union type specified by an ID.
+  *)
+  let tags_of_type (t_id : type_id) : type_tag list State.t =
+    let+ type_ids = State.asks (fun s -> s.type_ids) in
     type_ids
       |> Int_Map.find t_id
       |> List.mapi (fun u_id _ -> Tag { t_id; u_id; })
 
-
+  (** 
+    A helper function for finding the first
+    index within a list which satisfies a criterion.
+    If no index does, the [default] is returned.
+  *)
   let first_where ~default f tys ty =
     tys |> List.mapi (fun i t -> (i, t))
         |> List.find_opt (fun (_, t) -> f ty t)
         |> Option.map fst
         |> Option.value ~default
         
+  (**
+    Finds the first index within a union type
+    which the given simple type would match.
+  *)
   let find_matching tys ty =
     first_where is_subtype_simple tys ty
 
+  (**
+    Finds the first index within a union type
+    which the given simple type is an instance of.
+  *)
   let find_retagging tys ty =
     first_where is_instance_simple tys ty
 
-  let rec visit_expr e =
-    traverse visit_clause e >>
-    pure ()
 
+  (**
+    Traverse each of the clauses in the expression
+    to find record constructors and match usages.
+  *)
+  let rec visit_expr e : unit State.t =
+    traverse visit_clause e >>
+    State.pure ()
+
+  (**
+    Determine whether the clause is of interest.
+    Clauses which are record constructions,
+    match statements, or function values are interesting
+    as they contain and/or are directly a place
+    for us to produce a lookup table.
+  *)
   and visit_clause (Cl (pp, body)) =
     match body with
     | BVal (VRec record)    -> process_record pp record
@@ -545,9 +703,13 @@ module Tagging = struct
         traverse (fun (_, expr) -> visit_expr expr) branches >>
         process_match pp id branches
 
-    | _ -> pure ()
+    | _ -> State.pure ()
 
-  and process_record pp record =
+  (**
+    Create the record construction lookup table
+    for the given program point and record definition.
+  *)
+  and process_record (pp : ident) (record : (label * ident) list) =
     let* records = record 
       |> traverse @@ fun (lbl, elt) ->
           let* elt_tid  = type_id_of elt in
@@ -575,12 +737,16 @@ module Tagging = struct
         (Field_Tags_Map.union (fun _ _ _ -> None)) (* safe, the maps are disjoint. *)
         Field_Tags_Map.empty
     in
-    modify (fun s -> { s with 
+    State.modify (fun s -> { s with 
       record_tables = s.record_tables
         |> ID_Map.add pp field_map
     })
 
-  and process_match pp id branches =
+  (**
+    Create the match branch lookup table 
+    for the given match expression.
+  *)
+  and process_match (pp : ident) (id : ident) branches : unit State.t =
     let* id_tid = type_id_of id in
     let* id_tags = tags_of_type id_tid in
     let branch_tys = List.map fst branches in
@@ -593,12 +759,16 @@ module Tagging = struct
         (Type_Tag_Map.union (fun _ _ _ -> None)) (* safe, the maps are disjoint. *)
         Type_Tag_Map.empty 
     in
-    modify (fun s -> { s with
+    State.modify (fun s -> { s with
       match_tables = s.match_tables
         |> ID_Map.add pp branch_map
     })
   
-
+  (**
+    Given an expression and type information for it,
+    compute all the necessary record and match related
+    lookup tables for a tagged runtime.
+  *)
   let compute_tag_tables pp_types type_ids expr =
     let (tag_state, _, ()) =
       visit_expr expr { type_ids; pp_types; }
@@ -611,19 +781,28 @@ module Tagging = struct
 
 end
 
+
+(**
+  A record of all the data which is collected
+  over each of the previous phases of analysis.
+*)
 type full_analysis =
   {
-    flow : FlowTracking.flow_state;
-    result: RValue'.rvalue;
-    pp_types: int ID_Map.t;
-    type_ids: simple_type list Int_Map.t;
-    match_tables: int Type_Tag_Map.t ID_Map.t;
-    record_tables: type_tag Field_Tags_Map.t ID_Map.t;
+    flow : FlowTracking.flow_state;       (** Data dependencies. *)
+    result: RValue'.rvalue;               (** Untagged Interpreter Output. *)
+    pp_types: int ID_Map.t;               (** Inferred Types. *)
+    type_ids: simple_type list Int_Map.t; (** Universe of Types. *)
+    match_tables: int Type_Tag_Map.t ID_Map.t; (** Match lookup tables. *)
+    record_tables: type_tag Field_Tags_Map.t ID_Map.t; (** Record lookup tables. *)
   }
 
+(**
+  Run each phase of analysis on the provided test case,
+  returning the collection of results.
+*)
 let full_analysis_of test_case =
   let (flow, rval) = FlowTracking.eval test_case in
-  let result = FlowTracking.RValue.unwrap_rvalue rval in
+  let result = FlowTracking.RValue.unwrap rval in
   let (type_ids, pp_types) = 
     Typing.assign_program_point_types
       flow.data_flow flow.type_flow in
@@ -638,11 +817,12 @@ let full_analysis_of test_case =
     record_tables;
   }
   
-(*
-  The environment from interpretation
-  takes up way too much space when used
-  interactively via utop etc., so this
-  version just gets rid of it for convenience.
+
+(**
+  A version of the above function which removes
+  the information about the runtime environment of
+  the flow interpreter, so that the result is more
+  easily viewed on the toplevel.
 *)
 let full_analysis_of' test_case =
   let f = full_analysis_of test_case in
@@ -653,56 +833,96 @@ let full_analysis_of' test_case =
   }
 
 
-
-
+(**
+  The interpreter which uses runtime type tag information
+  to reduce overhead in pattern matching.
+*)
 module TaggedEvaluator = struct
 
+  (**
+    Exceptions which may be thrown during interpretation.
+    Under normal circumstances, none should occur; they
+    indicate that the input program is malformed in some way.
+  *)
   type exn +=
     | Open_Expression
     | Type_Mismatch
     | Match_Fallthrough
     | Empty_Expression
 
+  (**
+    RValues paired with a {{!Types.type_tag} type_tag}
+  *)
   module RValue = RValue(WriterF(struct
     type t = Types.type_tag
   end))
 
   open RValue
   
+  (**
+    The only state we need in this case
+    is the runtime environment.
+  *)
   type eval_state =
     {
       env: rvalue env;
     }
 
+  (**
+    We also will require other inputs
+    in the form of a {!full_analysis} of the expression.
+  *)
   type eval_envt =
     full_analysis
 
+  (**
+    Again we use Reader-Writer-State to easily
+    combine state and inputs into one system.
+  *)
   module State = RWS_Util
     (struct type t = eval_envt end)
     (UnitM)
     (struct type t = eval_state end)
 
-  open State
-  open Syntax
+  open State.Syntax
 
-  module Lists = Traversable_Util(Lists)
-  open Lists.Make_Traversable(State)
+  open Traversable_Util(Lists)
+  open Make_Traversable(State)
 
-
+  (**
+    Helper function to throw the desired exception
+    when a {!Match_failure} occurs, to simplify the control
+    flow when defining the operator semantics, etc.
+  *)
   let protect e f v =
     try f v with | Match_failure (_, _, _) -> raise e
 
+  (** {!protect} in the form of a let-operator. *)
   let ( let$ ) v f =
     protect Type_Mismatch f v
 
-  let ( let$+ ) v f =
+  (** 
+    {!protect} + mapping over a monadic action. 
+    (like {{!Layout.Classes.Functor_Util.Syntax.val-let+} let+}) 
+  *)
+  let ( let$+ ) (v : _ State.t) f : _ State.t =
     protect Type_Mismatch f <$> v
 
-  let ( let$* ) v f =
+  (** 
+    {!protect} + binding a monadic action. 
+    (like {{!Layout.Classes.Monad_Util.Syntax.val-let*} let*})
+  *)
+  let ( let$* ) (v : _ State.t) (f : _ -> _ State.t) : _ State.t =
     v >>= protect Type_Mismatch f
 
-  let type_tag_of' pp ty : (simple_type * type_tag) State.t =
-    let+ { pp_types; type_ids; _ } = ask in
+  
+  (**
+    Use the {!full_analysis} to look up the
+    {!Types.type_tag} and associated {!Types.simple_type}
+    which is assigned to a particular program point.
+  *)
+  let type_tag_of' (pp : ident) ty : (simple_type * type_tag) State.t =
+    let+ { pp_types; type_ids; _ } = State.ask in
     let pp_tid = ID_Map.find pp pp_types in
     let pp_tys = Int_Map.find pp_tid type_ids in
     let pp_uid, pp_ty = 
@@ -710,46 +930,71 @@ module TaggedEvaluator = struct
              |> List.find (fun (_, t) -> Types.is_instance_simple t ty)
     in pp_ty, Tag { t_id = pp_tid; u_id = pp_uid; }
     
-  
+  (**
+    Retrieve just the {!Types.type_tag} for a program point.
+  *)
   let type_tag_of pp ty : type_tag State.t =
     snd <$> type_tag_of' pp ty
 
-  let tagged pp ty rv' : rvalue State.t =
+  (**
+    Assign the correct tag to an (untagged) {!rvalue}
+    given that it will be going to a particular
+    program point with a particular runtime type.
+  *)
+  let tagged pp ty (rv' : rvalue_spec) : rvalue State.t =
     let+ tag = type_tag_of pp ty in
     (tag, rv')
 
+  (**
+    Assign the correct boolean type tag to
+    the {!rvalue} depending on the actual value it holds.
+  *)
   let tagged' pp b rv' : rvalue State.t =
     if b then
       tagged pp TTrue rv'
     else
       tagged pp TFalse rv'
 
+  (**
+    Look up the {!Types.simple_type} associated
+    with the given {!Types.type_tag}.
+  *)
   let type_of_tag (Tag tag) : simple_type State.t =
-    let+ { type_ids; _ } = ask in
+    let+ { type_ids; _ } = State.ask in
     let ty = Int_Map.find tag.t_id type_ids in
     List.nth ty tag.u_id
 
-  let lookup id : rvalue State.t =
-    let+ env = gets (fun s -> s.env) in
+  (**
+    Look up an rvalue by name in the environment.
+  *)
+  let lookup (id : ident) : rvalue State.t =
+    let+ env = State.gets (fun s -> s.env) in
     match List.assoc_opt id env with
     | None    -> raise Open_Expression
     | Some(v) -> v
 
-  let use_env env' (ma : 'a State.t) : 'a State.t =
-    control
+  (**
+    Given a new environment to operate in,
+    run the provided stateful action within it,
+    then revert the environment.
+  *)
+  let use_env env' : 'a State.t -> 'a State.t =
+    State.control
       (fun _ -> { env = env' })
       (fun s _ -> s)
-      ma
 
-
-  let eval_value pp =
+  (**
+    Compute the runtime (tagged) value of an {!Ast.value}
+    given the current program point.
+  *)
+  let eval_value pp : Ast.value -> rvalue State.t =
     function
     | VInt i -> tagged pp TInt   @@ RInt i
     | VTrue  -> tagged pp TTrue  @@ RBool true
     | VFalse -> tagged pp TFalse @@ RBool false
     
     | VFun (id, expr) ->
-      let* env = gets (fun s -> s.env) in
+      let* env = State.gets (fun s -> s.env) in
       tagged pp TFun @@ RFun (env, id, expr)
 
     | VRec record ->
@@ -761,18 +1006,23 @@ module TaggedEvaluator = struct
                 |> Seq.map (fun (lbl, rv) -> (lbl, fst rv))
                 |> ID_Map.of_seq
       in
-      let+ { record_tables; _ } = ask in
+      let+ { record_tables; _ } = State.ask in
       let record_table = ID_Map.find pp record_tables in
       let tag = Field_Tags_Map.find field_tags record_table in
       (tag, RRec record')
 
-
+  (**
+    Evaluate a particular record {{!Ast.body.BProj} projection}.
+  *)
   let [@warning "-8"] eval_proj id lbl =
     let$+ (_, RRec record) = lookup id in
     match List.assoc_opt lbl record with
     | None     -> raise Type_Mismatch
     | Some(v)  -> v
   
+  (**
+    Evaluate (and tag properly) the result of an {!Ast.operator}.
+  *)
   let [@warning "-8"] eval_op pp =
     function
     | OPlus (i1, i2) ->
@@ -814,6 +1064,9 @@ module TaggedEvaluator = struct
       let r2 = not r1 in
       tagged' pp r2 @@ RBool r2
 
+  (**
+    Evaluate a single {!Ast.clause} in the expression.
+  *)
   let rec eval_clause (Cl (pp, body)) =
     match body with
     | BVar id -> lookup id
@@ -823,18 +1076,31 @@ module TaggedEvaluator = struct
     | BApply (id1, id2) -> eval_apply id1 id2
     | BMatch (id, branches) -> eval_match pp id branches
 
+  (**
+    Evaluate a function {{!Ast.body.BApply} application}.
+  *)
   and [@warning "-8"] eval_apply id1 id2 =
     let$* (_, RFun (env, id, expr)) = lookup id1 in
     let* v2 = lookup id2 in
     use_env ((id, v2) :: env) @@ eval_t expr
 
+  (**
+    Evaluate (using tag lookup tables)
+    a particular {{!Ast.body.BMatch} match} expression.
+
+    The program point has to be supplied too so we
+    can retrieve the necessary match table entry.
+  *)
   and eval_match pp id branches =
-    let$* { match_tables; _ } = ask in
+    let$* { match_tables; _ } = State.ask in
     let match_table = ID_Map.find pp match_tables in
     let* (tag, _) = lookup id in
     let branch = Type_Tag_Map.find tag match_table in
     eval_t (snd @@ List.nth branches branch)
 
+  (**
+    Evaluate an {!Ast.expr} in a tagged fashion.
+  *)
   and eval_t expr : rvalue State.t =
     match expr with
     | [] -> raise Empty_Expression
@@ -847,9 +1113,14 @@ module TaggedEvaluator = struct
     then State.pure body_value
     else eval_t cls
 
-  let eval expr analysis =
+  (**
+    Entry point to the other evaluation functions;
+    this sets up and unwraps the {!State} monad and
+    the tags in the resulting rvalue.
+  *)
+  let eval expr analysis : eval_state * Ast.rvalue' =
     let (s, _, a) = eval_t expr analysis { env = []; }
-    in (s, RValue.unwrap_rvalue a)
+    in (s, RValue.unwrap a)
 
 end
 
