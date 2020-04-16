@@ -1,4 +1,8 @@
 
+(**
+  Helper functions used in the parser.
+*)
+
 open Ast
 
 open Classes

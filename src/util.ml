@@ -1,7 +1,11 @@
 
-(*
-  List representation
-  with constant-time prepend, append, map, and concatenate.
+(**
+  Utility data structures.
+*)
+
+(**
+  List representation with constant-time
+  prepend, append, map, and concatenate.
   Conversion to regular lists in O(n) once done.
 *)
 module Diff_list = struct
@@ -32,7 +36,7 @@ module Diff_list = struct
     l ++ pure a
 end
 
-(*
+(**
   Disjoint sets data structure
   with practically constant set union
   and lookup, here with attached values
@@ -72,6 +76,7 @@ module Union_find = struct
 
 end
 
+(** {1 Various maps and sets} *)
 
 module ID_Map = Map.Make(String)
 module ID_Set = Set.Make(String)
@@ -102,9 +107,12 @@ module Field_Tags_Map = Map.Make(struct
   let compare = ID_Map.compare Types.compare_type_tag
 end)
 
-
+(**
+  Functions to operate over any particular kind of set.
+  Currently only includes a [powerset] function.
+*)
 module Set_Util (S : Set.S) = struct
-
+    
   let powerset s =
     let open Diff_list in
     let diff =

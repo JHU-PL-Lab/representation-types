@@ -1,4 +1,15 @@
 
+(**
+  Regression and correctness tests.
+  The primary purpose is to check that
+  the naive, untagged interpreter agrees with
+  the tagged interpreter on the values of expressions.
+*)
+
+
+(**
+  Helper to parse a nicer syntax into {!Ast.expr} form.
+*)
 let parse s =
   Parser.main Lexer.read (Lexing.from_string s)
 

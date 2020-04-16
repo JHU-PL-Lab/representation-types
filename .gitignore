@@ -2,10 +2,6 @@
 *.cmi
 *.cmx
 *.o
-typechecker
-typeinference
-interpreter
-setinterpreter
 
 _build/
 .merlin

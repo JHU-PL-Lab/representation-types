@@ -99,7 +99,7 @@ module Matching = struct
     | BMatch (_, branches) ->
       State.map ignore (branches |> traverse
         (fun (ty, expr) ->
-          visit_type ty >>
+          visit_type ty *>
           visit_expr expr))
 
     | _ -> State.pure ()
@@ -115,7 +115,7 @@ module Matching = struct
     each {{!Layout.Ast.clause} clause}.
   *)
   and visit_expr expr : unit State.t =
-    traverse visit_clause expr >>
+    traverse visit_clause expr *>
     State.pure ()
         
   (**
@@ -132,7 +132,7 @@ module Matching = struct
         (powerset shape
           |> List.filter_map (fun s -> ID_Set_Map.find_opt s by_shape)
           |> traverse (update_depths shape)
-        ) >> State.pure ())
+        ) *> State.pure ())
     in
     fst (update_sub_shapes ID_Set_Map.empty)
 
@@ -684,7 +684,7 @@ module Tagging = struct
     to find record constructors and match usages.
   *)
   let rec visit_expr e : unit State.t =
-    traverse visit_clause e >>
+    traverse visit_clause e *>
     State.pure ()
 
   (**
@@ -700,7 +700,7 @@ module Tagging = struct
     | BVal (VFun (_, expr)) -> visit_expr expr
 
     | BMatch (id, branches) ->
-        traverse (fun (_, expr) -> visit_expr expr) branches >>
+        traverse (fun (_, expr) -> visit_expr expr) branches *>
         process_match pp id branches
 
     | _ -> State.pure ()

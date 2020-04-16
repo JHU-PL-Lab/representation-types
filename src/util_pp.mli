@@ -1,4 +1,14 @@
 
+(**
+  Pretty-printers for all of the
+  instantiations of {!Stdlib.Map} and {!Stdlib.Set}
+  found in {!Layout.Util}.
+
+  These are automatically installed in the toplevel
+  when this module is opened, thanks to the {i really}
+  convenient [[@@ocaml.toplevel_printer]] annotation.
+*)
+
 val pp_id_set : Format.formatter -> Util.ID_Set.t -> unit
   [@@ocaml.toplevel_printer]
 

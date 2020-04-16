@@ -13,20 +13,25 @@
   in a regular manner.
 
   Requires that {!Semigroup.append} is associative,
-  to be true to form.
+  to be true to form:
+  {[
+    append a (append b c) == append (append a b) c
+  ]}
 *)
 module type Semigroup = sig
   type t
-  val append : t -> t -> t
+  val append : t -> t -> t (** combine two {!t} values *)
 end
 
 (**
   Easily-derived helper definitions to be
   attached to a {!Semigroup} implementation.
 *)
-module SemigroupUtil (S : Semigroup) = struct
+module Semigroup_Util (S : Semigroup) = struct
   include S
+
   module Syntax = struct 
+    (** Synonym for {!S.append} *)
     let ( <> ) = S.append
   end
 end
@@ -59,16 +64,16 @@ end
   Types which form a {!Semigroup}, and
   which additionally have some zero element.
 
-  Requires that
+  Requires associativity and that
   {[
-    Monoid.append m Monoid.empty = m
-    Monoid.append Monoid.empty m = m
+    append m empty == m
+    append empty m == m
   ]}
 *)
 module type Monoid = sig
   type t
   include Semigroup with type t := t
-  val empty : t
+  val empty : t (** the identity/zero element of {!t} *)
 end
 
 (**
@@ -157,9 +162,17 @@ end
   Types which can be mapped over in some sense.
   Regular functions can be lifted to operate over
   elements of a functor with {!Functor.map}.
+
+  Conceptually the functor is not consistent unless
+  mapping the identity function does nothing:
+  {[
+    map (fun x -> x) f == f
+  ]}
 *)
 module type Functor = sig
   type 'a t
+
+  (** Lift a regular function to operate over {!t}s *)
   val map : ('a -> 'b) -> 'a t -> 'b t
 end
 
@@ -170,13 +183,17 @@ end
 module Functor_Util (F : Functor) = struct
   include F
   module Syntax = struct
+
+    (** Synonym for {!F.map} *)
     let ( <$> ) = F.map
+
+    (** Let-operator for {!F.map} *)
     let ( let+ ) a f = F.map f a
   end
 end
 
 (**
-  Given any two functors [F] and [G],
+  Given any two {!Functor}s [F] and [G],
   their composition is also a functor.
 *)
 module Compose (F : Functor) (G : Functor)
@@ -187,7 +204,7 @@ struct
 end
 
 (**
-  Given any two functors [F] and [G],
+  Given any two {!Functor}s [F] and [G],
   their disjoint sum is also a functor.
 *)
 module Sum (F : Functor) (G : Functor)
@@ -211,6 +228,7 @@ end
 module Distributive (F : Functor) (G : Functor) =
 struct
   module type Inst = sig
+    (** Commute the order of the type constructors {!F.t} and {!G.t} *)
     val distribute : 'a F.t G.t -> 'a G.t F.t
   end
 end
@@ -221,12 +239,29 @@ end
   Functors which additionally allow operations to
   view enclosing (even non-local) structure in their mapping operations,
   or throw away the additional structure for the internal value
+
+  Note that the definitions of {!Comonad.extract} and
+  {!Comonad.extend} should satisfy certain principles in order
+  to behave predictably. These expectations include:
+  {[
+    extend extract w == w
+    extract (extend f w) == f w
+    extend f (extend g w) == extend (compose f g) w
+
+    map f w = extend (fun w -> f (extract w)) w
+  ]}
+  
+  The first two are the most important to guarantee
+  to insure correctness for the others, in practice.
 *)
 module type Comonad = sig
   type 'a t
   include Functor with type 'a t := 'a t
 
+  (** Throw away the comonadic context {!t}. *)
   val extract : 'a t -> 'a
+  
+  (** Propagate the context {!t} through a computation which consumes it. *)
   val extend : 'a t -> ('a t -> 'b) -> 'b t
 end
 
@@ -238,18 +273,25 @@ module Comonad_Util (W : Comonad) = struct
   include W
   include Functor_Util(W)
 
+  (** Construct another layer of context. *)
   let duplicate w = extend w (fun a -> a)
 
   module Syntax = struct
     include Syntax
+
+    (** Synonym for {!W.extend} *)
     let (=>>) = extend
+
+    (** Composition of Cokleisli arrows *)
     let (=>=) k1 k2 = fun w -> k2 (w =>> k1)
+    
+    (** A let-operator for {!W.extend}. Perhaps useful? *)
     let ( let@ ) = extend
   end
 end
 
 (**
-  Given any two comonads [F] and [G],
+  Given any two {!Comonad}s [F] and [G],
   their disjoint sum is also a comonad.
 *)
 module SumC (F : Comonad) (G : Comonad)
@@ -268,7 +310,7 @@ struct
 end
 
 (**
-  If two comonads [F] and [G] are {!Distributive},
+  If two {!Comonad}s [F] and [G] are {!Distributive},
   then their composition is also a comonad.
 *)
 module ComposeC (F : Comonad) (G : Comonad) (D : Distributive(G)(F).Inst)
@@ -302,6 +344,8 @@ module type Foldable = sig
     provide a means to reduce our structure to it.
   *)
   module Make_Foldable (M : Monoid) : sig
+
+    (** Given a conversion into monoid {!M}, collapse the structure of {!t}. *)
     val fold_map : ('a -> M.t) -> 'a t -> M.t
   end
 end
@@ -326,7 +370,7 @@ module Foldable_Util (F : Foldable) = struct
       F.fold_map f fs
 
   (**
-    Equivalent to [fold_map] with the identity.
+    Equivalent to {!fold_map} with the identity.
   *)
   let fold m fs = fold_map m (fun m -> m) fs
 
@@ -394,7 +438,7 @@ module Foldable_Util (F : Foldable) = struct
 end
 
 (**
-  For any foldables [F] and [G],
+  For any {!Foldable}s [F] and [G],
   their composition is also foldable.
 *)
 module ComposeF (F : Foldable) (G : Foldable)
@@ -435,12 +479,22 @@ end
   Functors which additionally admit pure
   values to be added to a context with {!Applicative.pure},
   and for contexts to be combined with {!Applicative.apply}.
+
+  Instances should satisfy:
+  {[
+    apply (pure f) a = map f a
+    apply (pure f) (pure x) = pure (f x)
+
+  ]}
 *)
 module type Applicative = sig
   type 'a t
   include Functor with type 'a t := 'a t
 
+  (** Embed a pure value into the applicative context {!t} *)
   val pure  : 'a -> 'a t
+
+  (** Compose applicative effects together *)
   val apply : ('a -> 'b) t -> 'a t -> 'b t
 end
 
@@ -452,17 +506,51 @@ module Applicative_Util (A : Applicative) = struct
   include A
   include Functor_Util(A)
 
+  (**
+    Lift a binary function to the level of
+    the {!Applicative}. Like a binary {!map}.
+  *)
+  let lift2 f a1 a2 =
+    A.apply (A.map f a1) a2
+  (**
+    It is not {i so} impressive a function however,
+    considering that an arbitrary liftN is better modeled by
+    {[
+      f <$> a1 <*> ... <*> aN
+    ]}
+  *)
+
   module Syntax = struct
     include Syntax
+ 
+    (** Synonym for {!A.apply} *)
     let ( <*> ) = A.apply
+
+    (** [*>] links two {!Applicative} values, keeping only the {i right} result. *)
     let ( *> ) a1 a2 = (fun _ a2 -> a2) <$> a1 <*> a2
+
+    (** [<*] links two {!Applicative} values, keeping only the {i left} result. *)
     let ( <* ) a1 a2 = (fun a1 _ -> a1) <$> a1 <*> a2
+
+    (** Let-operator allowing multiple bindings at once, powered by the underlying {!Applicative}. *)
     let ( and+ ) a1 a2 = (fun a b -> (a, b)) <$> a1 <*> a2
+    (**
+      This allows e.g.
+      {[
+        let+ x = [1; 2; 3]
+        and+ y = [4; 5; 6]
+        in x + y
+      ]}
+
+      But just as in a normal [let/and] binding,
+      the value of [y] cannot depend on [x].
+      This would require a monad in general.
+    *)
   end
 end
 
 (**
-  For any applicative functors [F] and [G],
+  For any two {!Applicative} functors [F] and [G],
   their composition is also an applicative functor.
 *)
 module ComposeA (F : Applicative) (G : Applicative)
@@ -480,13 +568,19 @@ end
 (**
   Applicative functors which themselves have
   some sort of monoidal structure.
+
+  The {!Alternative} laws mirror those of {!Monoid}.
 *)
 module type Alternative = sig
   type 'a t
   include Applicative with type 'a t := 'a t
 
+  (** Parallel to the {!Monoid}al {{!Monoid.empty} empty} *)
   val empty : 'a t
+  
+  (** Parallel to the {!Monoid}al {{!Monoid.append} append} *)
   val append : 'a t -> 'a t -> 'a t
+  (** Note especially how this signature differs from {!apply} *)
 end
 
 (**
@@ -497,15 +591,25 @@ module Alternative_Util (A : Alternative) = struct
   include A
   include Applicative_Util(A)
 
+  (** Like regular expression [+], "one or more" *)
   let rec some (a : 'a t) : 'a list t =
     let open Syntax in
     (fun x xs -> x :: xs) <$> a <*> many a
 
+  (** Like regular expression kleene star, "zero or more" *)
   and many (a : 'a t) : 'a list t =
     append (some a) (pure [])
 
+  (**
+    The above definitions for {!some} and {!many}
+    might not really work due to OCaml's strictness.
+    Alternative formulations using {!lazy} might be necessary.
+  *)
+
   module Syntax = struct
     include Syntax
+
+    (** Synonym for {!A.append} *)
     let (<|>) = append
   end
 end
@@ -531,16 +635,41 @@ end
   Foldables which can distribute their internal
   structure through a given {!Applicative} functor,
   to sequence the underlying {!Applicative} effects.
+
+  The laws to obey here are
+  - [traverse] must visit each element exactly once.
+  - [traverse] cannot modify the underlying structure.
+  - and:
+  {[
+    traverse A.pure x == A.pure x
+  ]}
+  (which mostly follows from the first two.)
+
 *)
 module type Traversable = sig
   type 'a t
   include Foldable with type 'a t := 'a t
 
+  (**
+    Given a particular {!Applicative}, provide
+    the definition of {{!Make_Traversable.traverse}traverse} for it.
+  *)
   module Make_Traversable (A : Applicative) : sig
+    (**
+      Walk over the {!t} in {!Foldable} order,
+      transforming each value to an effect in {!A.t},
+      and sequencing the effects while rebuilding
+      the {!t} shape within using the new values.
+    *)
     val traverse : ('a -> 'b A.t) -> 'a t -> 'b t A.t
   end
 end
 
+
+(**
+  Easily-derived helper definitions to be
+  attached to a {!Traversable} implementation.
+*)
 module Traversable_Util (T : Traversable) = struct
   include T
   include Foldable_Util(T)
@@ -580,11 +709,24 @@ module Traversable_Util (T : Traversable) = struct
     let open Make_Traversable(StateR) in
     traverse (fun b a -> f a b) t s
 
+  (**
+    Invert the order of elements in a {!Traversable.t}.
+  *)
   let reverse : type a. a T.t -> a T.t =
     fun t ->
       let [@warning "-8"] acc (x::xs) _ = (xs, x)
       in snd @@ map_accumr acc (to_list t) t
 
+  (**
+    Given a {!Foldable} [F], take in two structures
+    of equal {!length} and produce a {!T.t} of pairs.
+
+    One cannot, in general, modify the structure during {!traverse},
+    and so this must throw an exception if the lengths are not
+    the same. Curiously, this is also the behavior of OCaml's
+    {!List.combine_with} and {!List.combine}, so it's consistent
+    at least.
+  *)
   module Make_Zip (F : Foldable) = struct
     exception Insufficent_zip_length
 
@@ -603,15 +745,21 @@ module Traversable_Util (T : Traversable) = struct
 
   end
 
+  (** Alias for {!Make_Zip.zip_with} when the foldable is {!T} itself. *)
   let zip_with' f t1 t2 =
     let open Make_Zip(T) in
     zip_with f t1 t2
   
+  (** Alias for {!Make_Zip.zip} when the foldable is {!T} itself. *)
   let zip' t1 t2 =
     zip_with' (fun a b -> (a, b)) t1 t2
 
 end
 
+(**
+  Given two {!Traversable}s [F] and [G],
+  their composition is also traversable.
+*)
 module ComposeT (F : Traversable) (G : Traversable)
   : Traversable with type 'a t = 'a G.t F.t =
 struct
@@ -624,6 +772,10 @@ struct
   end
 end
 
+(**
+  Given two {!Traversable}s [F] and [G],
+  their disjoint sum is also traversable.
+*)
 module SumT (F : Traversable) (G : Traversable)
   : Traversable with type 'a t = 'a Sum(F)(G).t =
 struct
@@ -640,36 +792,62 @@ struct
   end
 end
 
-(*
-
-  MONADS
-
+(**
+  {1 Monads} 
+  (your feature presentation) 
 *)
 
+(**
+  Applicative functors which also allow
+  later computations to depend upon prior effectful results.
+
+  Monad laws:
+  {[
+    bind m pure == m
+    bind (pure m) f == f m
+    bind (bind m f) g == bind m (fun m -> bind (f m) g)
+  ]}
+*)
 module type Monad = sig
   type 'a t
   include Applicative with type 'a t := 'a t
 
+  (** Use an effectful ['a] to produce a new effectful computation. *)
   val bind : 'a t -> ('a -> 'b t) -> 'b t
+  (**
+    Alternately: {!map} over the {!t}, then eliminate the double-nesting.
+  *)
 end
 
+(**
+  Easily-derived helper definitions to be
+  attached to a {!Monad} implementation.
+*)
 module Monad_Util (M : Monad) = struct
   include M
   include Applicative_Util(M)
 
   module Syntax = struct
     include Syntax
-
-    let ( let* ) = M.bind
+      
+    (** Synonym for {!M.bind} *)
     let ( >>= ) = M.bind
-    let ( >> ) m1 m2 = m1 >>= fun _ -> m2
+
+    (** Composition of kleisli arrows. *)
     let ( >=> ) f g = fun a -> f a >>= g
+
+    (** Let-operator for {!M.bind}. {i THE} programmable semicolon. *)
+    let ( let* ) = M.bind
   end
 
+  (** Compress two effect layers of {!t} into one. *)
   let join mm = M.bind mm (fun m -> m)
 end
 
-
+(**
+  If two {!Monad}s [F] and [G] are {!Distributive},
+  then the composition of [F] and [G] is also a monad.
+*)
 module ComposeM (F : Monad) (G : Monad) (D : Distributive(F)(G).Inst)
   : Monad with type 'a t = 'a G.t F.t =
 struct
@@ -685,13 +863,11 @@ struct
 end
 
 
+(** {1 Assorted Instances} *)
 
-(*
-
-  INSTANCES
-
+(**
+  Strings form a {!Monoid} with [""] and [^].
 *)
-
 module Strings
   : Monoid with type t = string =
 struct
@@ -700,6 +876,9 @@ struct
   let append s1 s2 = s1 ^ s2
 end
 
+(**
+  The {!unit} type forms a trivial monoid.
+*)
 module UnitM
   : Monoid with type t = unit =
 struct
@@ -708,6 +887,12 @@ struct
   let append () () = ()
 end
 
+(**
+  Wrapping a type in {!Identity.t} does nothing.
+  This is often useful and can fulfill many of
+  the most poserful class requirements defined here, including
+  {!Monad}, {!Comonad}, and {!Traversable}.
+*)
 module Identity : sig
   type +'a t = 'a
   include Monad       with type 'a t := 'a t
@@ -733,23 +918,20 @@ struct
   end
 end
 
-module ConstF (T : sig type t end)
-  : Functor with type 'a t = T.t =
+(**
+  The constant functor holds no value of the type it
+  is parametrized over at all, and ignores {!Functor.map}
+  entirely. Instead, it holds a value of another type.
+  When it is traversed or folded over, it always has
+  an empty value or effect.
+*)
+module ConstT (T : sig type t end) : sig
+  include Functor     with type 'a t = T.t
+  include Traversable with type 'a t = T.t
+end =
 struct
   type +'a t = T.t
   let map _ a = a
-end
-
-module Const (M : Monoid) : sig
-  include Monad       with type 'a t = M.t
-  include Traversable with type 'a t = M.t
-end =
-struct
-  include ConstF(M)
-
-  let pure _ = M.empty
-  let apply a1 a2 = M.append a1 a2
-  let bind a _ = a
 
   module Make_Foldable (M' : Monoid) = struct
     let fold_map _ _ = M'.empty
@@ -760,12 +942,36 @@ struct
   end
 end
 
+(**
+  When the type the constant functor holds is
+  itself a {!Monoid}, then we can upgrade our
+  functor to fulfill the whole suite of {!Monad}.
+*)
+module Const (M : Monoid) : sig
+  include Monad       with type 'a t = M.t
+  include Traversable with type 'a t = M.t
+end =
+struct
+  include ConstT(M)
 
+  let pure _ = M.empty
+  let apply a1 a2 = M.append a1 a2
+  let bind a _ = a
+end
+
+(**
+  The free {!Monad} for a given {!Functor} [F].
+
+  Also includes the convenience function {!Free.free}
+  to lift a functor value into the monad.
+*)
 module Free (F : Functor) : sig
   type 'a t =
     | Pure of 'a | Join of 'a t F.t
 
   include Monad with type 'a t := 'a t
+
+  val free : 'a F.t -> 'a t
 end =
 struct
   type 'a t =
@@ -785,9 +991,13 @@ struct
 
   let apply ff fa =
     bind ff (fun f -> map f fa)
+
+  let free fa = Join (F.map (fun x -> Pure x) fa)
 end
 
-
+(**
+  The cofree {!Comonad} for some {!Functor} [F].
+*)
 module CoFree (F : Functor) : sig
   type 'a t = CoFree of 'a * 'a t F.t
   include Comonad with type 'a t := 'a t
@@ -804,7 +1014,13 @@ struct
     CoFree (f c, F.map (fun c -> extend c f) fs)
 end
 
+(** {1 Significantly Used Instances} *)
 
+(**
+  The Writer {!Comonad} (also called Env)
+  wraps values in a context pairing them with some other type.
+  That is, it is the functor [(t * _)] for some [t].
+*)
 module WriterF (T : sig type t end) : sig
   include Comonad     with type 'a t = T.t * 'a
   include Traversable with type 'a t = T.t * 'a
@@ -826,6 +1042,13 @@ struct
   end
 end
 
+(**
+  When the type we pair each value with in the
+  Writer {!Comonad} is {!Monoid}al, we also gain
+  all of the {!Monad} abilities as well.
+  This chains together the monoidal actions we
+  generate as the result of various applicative effects.
+*)
 module Writer (M : Monoid) : sig
   module Monoid : Monoid with type t = M.t
   include Monad       with type 'a t = M.t * 'a
@@ -843,7 +1066,11 @@ struct
     let (t2, b) = f a in (M.append t1 t2, b)
 end
 
-
+(**
+  The Reader {!Monad} is the functor given by [t -> _] for some [t],
+  and is adjoint to Writer. This represents values which
+  require some shared context/input in order to compute.
+*)
 module Reader (T : sig type t end)
   : Monad with type 'a t = T.t -> 'a =
 struct
@@ -858,6 +1085,11 @@ struct
   let bind a f r = f (a r) r
 end
 
+(**
+  When the context each value depends on in the
+  Reader {!Monad} is {!Monoid}al, then we gain
+  all of the {!Comonad} operations here too.
+*)
 module ReaderC (M : Monoid) : sig
   module Monoid : Monoid with type t = M.t
   include Monad   with type 'a t = M.t -> 'a
@@ -871,7 +1103,12 @@ struct
   let extend f fs r = fs (fun r' -> f (M.append r r'))
 end
 
-
+(**
+  An indexed state monad. That is, this very general state monad
+  allows the state type to change at each operation step.
+  This is not necessary most of the time, but these function
+  definitions are still useful to define the regular {!State} module.
+*)
 module StateI = struct
   type ('s1, 's2, 'a) ti = 's1 -> 's2 * 'a
   type ('s, 'a) t = ('s, 's, 'a) ti
@@ -892,6 +1129,9 @@ module StateI = struct
     let (s2, v) = a s1 in f v s2
 end
 
+(**
+  The state {!Monad}. Values with a mutable shared state.
+*)
 module State (S : sig type t end)
   : Monad with type 'a t = S.t -> S.t * 'a =
 struct
@@ -899,6 +1139,12 @@ struct
   type 'a t = (S.t, 'a) StateI.t
 end
 
+(**
+  Because the {!State} {!Monad} has other frequently-used
+  operations, they are defined here for free.
+  Generally using {!State_Util} instead of {!State} itself
+  is easier.
+*)
 module State_Util (S : sig type t end) = struct
   module State = State(S)
   include Monad_Util(State)
@@ -922,7 +1168,12 @@ module State_Util (S : sig type t end) = struct
 
 end
 
-
+(**
+  Indexed Reader-Writer-State {!Monad}.
+  It turns out, the composition of {!Reader}, {!Writer},
+  and {!State} can be useful as a generalization of the three,
+  separating read-only, write-only, and mutable values.
+*)
 module RWSI (W : Monoid) = struct
 
   type ('r, 's1, 's2, 'a) ti =
@@ -948,6 +1199,10 @@ module RWSI (W : Monoid) = struct
       (s'', W.append w w', b)
 end
 
+(**
+  The concrete Reader-Writer-State {!Monad} with
+  the provided types for each component.
+*)
 module RWS (R : sig type t end) (W : Monoid) (S : sig type t end)
   : Monad with type 'a t = (R.t, S.t, 'a) RWSI(W).t
 = struct
@@ -955,6 +1210,12 @@ module RWS (R : sig type t end) (W : Monoid) (S : sig type t end)
   type 'a t = (R.t, S.t, 'a) RWSI(W).t
 end
 
+(**
+  Analog of {!State_Util} for the {!RWS} stack.
+  This includes all of the {!State} actions as well
+  as those common for {!Reader} and {!Writer}.
+  A very full suite of options.
+*)
 module RWS_Util (R : sig type t end) (W : Monoid) (S : sig type t end)
 = struct
   module RWS = RWS(R)(W)(S)
@@ -1006,7 +1267,10 @@ module RWS_Util (R : sig type t end) (W : Monoid) (S : sig type t end)
 end
 
 
-
+(**
+  {!Lazy.t} values can have {!Monad} and {!Comonad} instances
+  defined for them.
+*)
 module Lazies : sig
   type +'a t = 'a Lazy.t
   include Monad   with type 'a t := 'a t
@@ -1028,31 +1292,19 @@ struct
   let extend a f = lazy (f a)
 end
 
+(**
+  Whereas {!UnitM} is a stub, meaningless {!Monoid},
+  {!Units} is the equivalent for arity-1 type constructors
+  by making use of the {!Const} monad.
+*)
+module Units = Const(UnitM)
 
-module Units : sig
-  type 'a t = unit
-  include Monad       with type 'a t := 'a t
-  include Traversable with type 'a t := 'a t
-end =
-struct
-  type 'a t = unit
-
-  let map _ () = ()
-  let pure _ = ()
-  let apply () () = ()
-  let bind () _ = ()
-
-  module Make_Foldable (M : Monoid) = struct
-    let fold_map _ () = M.empty
-  end
-
-  module Make_Traversable (A : Applicative) = struct
-    let traverse _ () = A.pure ()
-  end
-
-end
-
-
+(**
+  The OCaml list type supports various classes defined here,
+  most notably {!Traversable}, {!Alternative}, and {!Monad},
+  where it often represents non-deterministic computations
+  or the free monoid.
+*)
 module Lists : sig
   include Alternative with type 'a t = 'a list
   include Monad       with type 'a t = 'a list
@@ -1084,6 +1336,13 @@ struct
   end
 end
 
+(**
+  Non-empty lists (represented as a pair of value and list)
+  gain the ability to implement {!Comonad}, but lose their
+  {!Alternative} instance (as there is no [empty] list, duh).
+  Their {!Monad} instance is also "zippy", rather than
+  "non-deterministic".
+*)
 module NonEmpty : sig 
   include Monad       with type 'a t = 'a * 'a list
   include Comonad     with type 'a t = 'a * 'a list
@@ -1093,7 +1352,13 @@ struct
   type +'a t = 'a * 'a list
 
   let map f (x, xs) = (f x, List.map f xs)
+
+  (**
+    I would have made this create an {i infinite}
+    list, but then OCaml would be too strict.
+  *)
   let pure a = (a, [])
+  
   let bind (x, xs) f =
     let rec concat ((x0, x0s), xNs) =
       match xNs with
@@ -1134,6 +1399,11 @@ struct
 
 end
 
+(**
+  The OCaml option type also supports notions of
+  partial computation, and a {!First}-esque instance
+  of {!Alternative}. It is also {!Traversable}.
+*)
 module Options : sig
   include Alternative with type 'a t = 'a option
   include Monad       with type 'a t = 'a option
@@ -1165,7 +1435,11 @@ struct
   end
 end
 
-
+(**
+  The {!Seq} type can be seen as a
+  {!Traversable} {!Monad}, like a lazy nondeterministic
+  list with zippy application.
+*)  
 module Seqs : sig
   include Monad       with type 'a t = 'a Seq.t
   include Traversable with type 'a t = 'a Seq.t
@@ -1174,6 +1448,8 @@ struct
   type 'a t = 'a Seq.t
 
   let map f s = Seq.map f s
+
+  (** Here, we {i can} make it infinite. *)
   let rec pure a = fun () -> Seq.Cons(a, pure a)
   let bind s f = Seq.flat_map f s
 
@@ -1201,7 +1477,11 @@ struct
 end
 
 
-
+(**
+  Let's not leave out OCaml {!Map}s, which unfortunately do
+  not have a lawful {!Applicative} (even with monoidal keys)
+  but are {!Traversable}, which is still useful.
+*)
 module Maps (M : Map.S)
   : Traversable with type 'a t = 'a M.t =
 struct
@@ -1222,38 +1502,4 @@ struct
         M.fold (fun k b apm -> M.add <$> A.pure k <*> b <*> apm) m'
           (A.pure M.empty)
   end
-end
-
-
-module Arrays (Size : sig val length : int end) : sig
-  type 'a t = 'a array
-  include Monad with type 'a t := 'a t
-  include Traversable with type 'a t := 'a t
-end = 
-struct
-  type 'a t = 'a array
-
-  let map f ar = Array.map f ar
-  let pure a = Array.make Size.length a
-  let apply fs xs =
-    Array.map2 (@@) fs xs
-
-  let bind xs f =
-    map f xs |> Array.mapi 
-      (fun ix xx -> xx.(ix))
-
-
-  module Make_Foldable (M : Monoid) = struct
-    let fold_map am xs =
-      Array.fold_left (fun m a -> M.append m (am a)) M.empty xs
-  end
-
-  module Make_Traversable (A : Applicative) = struct
-    let traverse at xs =
-      let module L = Lists.Make_Traversable(A) in
-      A.map Array.of_list
-      @@ L.traverse at
-      @@ Array.to_list xs
-  end
-
 end

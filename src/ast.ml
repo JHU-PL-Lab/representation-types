@@ -1,4 +1,9 @@
 
+(**
+  Definitions of the structure of
+  values, both statically and at runtime.
+*)
+
 open Util
 open Types
 open Classes

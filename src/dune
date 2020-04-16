@@ -34,3 +34,8 @@
 (menhir
    (modules parser)
    (flags --explain))
+
+(rule
+   (alias top)
+   (action (chdir %{project_root}
+      (run dune utop . -- -rectypes))))
