@@ -10,60 +10,71 @@
 *)
 
 
-val pp_type_tag : Format.formatter -> Types.type_tag -> unit
+(**
+  Type abbreviations so I don't go insane.
+*)
+
+type 'a formatter
+  = Format.formatter -> 'a -> unit
+
+type ('a, 'b) formatter1
+  = 'a formatter -> 'b formatter
+
+
+val pp_type_tag : Types.type_tag formatter
   [@@ocaml.toplevel_printer]
 
-val pp_simple_type : Format.formatter -> Types.simple_type -> unit
+val pp_simple_type : Types.simple_type formatter
   [@@ocaml.toplevel_printer]
 
+val pp_operator : Ast.operator formatter
+  [@@ocaml.toplevel_printer]
 
+val pp_value : Ast.value formatter
+  [@@ocaml.toplevel_printer]
+
+val pp_body : Ast.body formatter
+  [@@ocaml.toplevel_printer]
+
+val pp_clause : Ast.clause formatter
+  [@@ocaml.toplevel_printer]
+
+val pp_rvalue' : Ast.rvalue' formatter
+  [@@ocaml.toplevel_printer]
+
+val pp_rvalue_spec : ('a, 'a Ast.rvalue_spec) formatter1
+  [@@ocaml.toplevel_printer]
   
 
-val pp_id_set : Format.formatter -> Util.ID_Set.t -> unit
+val pp_id_set : Util.ID_Set.t formatter
   [@@ocaml.toplevel_printer]
 
-val pp_int_set : Format.formatter -> Util.Int_Set.t -> unit
+val pp_int_set : Util.Int_Set.t formatter
   [@@ocaml.toplevel_printer]
 
-val pp_type_set : Format.formatter -> Util.Type_Set.t -> unit
+val pp_type_set : Util.Type_Set.t formatter
   [@@ocaml.toplevel_printer]
 
-val pp_type_map :
-  (Format.formatter -> 'a -> unit) ->
-  Format.formatter -> 'a Util.Type_Map.t -> unit
+val pp_type_map : ('a, 'a Util.Type_Map.t) formatter1
   [@@ocaml.toplevel_printer]
 
-val pp_id_map :
-  (Format.formatter -> 'a -> unit) ->
-  Format.formatter -> 'a Util.ID_Map.t -> unit
+val pp_id_map : ('a, 'a Util.ID_Map.t) formatter1
   [@@ocaml.toplevel_printer]
 
-val pp_int_map :
-  (Format.formatter -> 'a -> unit) ->
-  Format.formatter -> 'a Util.Int_Map.t -> unit
+val pp_int_map : ('a, 'a Util.Int_Map.t) formatter1
   [@@ocaml.toplevel_printer]
 
-val pp_id_set_map :
-  (Format.formatter -> 'a -> unit) ->
-  Format.formatter -> 'a Util.ID_Set_Map.t -> unit
+val pp_id_set_map : ('a, 'a Util.ID_Set_Map.t) formatter1
   [@@ocaml.toplevel_printer]
 
-val pp_type_set_map :
-  (Format.formatter -> 'a -> unit) ->
-  Format.formatter -> 'a Util.Type_Set_Map.t -> unit
+val pp_type_set_map : ('a, 'a Util.Type_Set_Map.t) formatter1
   [@@ocaml.toplevel_printer]
 
-val pp_type_tag_map :
-  (Format.formatter -> 'a -> unit) ->
-  Format.formatter -> 'a Util.Type_Tag_Map.t -> unit
+val pp_type_tag_map : ('a, 'a Util.Type_Tag_Map.t) formatter1
   [@@ocaml.toplevel_printer]
 
-val pp_type_tag_pair_map :
-  (Format.formatter -> 'a -> unit) ->
-  Format.formatter -> 'a Util.Type_Tag_Pair_Map.t -> unit
+val pp_type_tag_pair_map : ('a, 'a Util.Type_Tag_Pair_Map.t) formatter1
   [@@ocaml.toplevel_printer]
 
-val pp_field_tags_map :
-  (Format.formatter -> 'a -> unit) ->
-  Format.formatter -> 'a Util.Field_Tags_Map.t -> unit
+val pp_field_tags_map : ('a, 'a Util.Field_Tags_Map.t) formatter1
   [@@ocaml.toplevel_printer]

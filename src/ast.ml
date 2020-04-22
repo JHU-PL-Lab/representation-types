@@ -91,7 +91,7 @@ type 'rvalue rvalue_spec =
   | RInt  of int
   | RBool of bool
   
-  | RRec  of ('rvalue ID_Map.t [@polyprinter Util_pp.pp_id_map])
+  | RRec  of ('rvalue ID_Map.t [@polyprinter Util.pp_id_map])
   | RFun  of 'rvalue env * ident * expr
   [@@deriving show { with_path = false }]
 
