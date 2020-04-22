@@ -23,8 +23,8 @@ module Matching = struct
     from each record shape to
     the depths needed for each of its fields.
   *)
-  type shape_depth_t =
-    int ID_Map.t ID_Set_Map.t
+  type field_depth_t = int ID_Map.t
+  type shape_depth_t = field_depth_t ID_Set_Map.t
 
   (**
     We work in the state monad mainly
@@ -32,7 +32,7 @@ module Matching = struct
     our map manually through.
   *)
   module State = State_Util(struct
-    type t = shape_depth_t
+    type t = field_depth_t
   end)
 
   open State.Syntax
@@ -46,16 +46,11 @@ module Matching = struct
     fields has at least the depth required
     by [field_depths]. 
   *)
-  let update_depths shape field_depths : unit State.t =
-    State.modify @@ ID_Set_Map.update shape
-      begin function
-      | None -> Some(field_depths)
-      | Some(depths') ->
-        let max = ID_Map.union
-          (fun _ c1 c2 -> Some(max c1 c2))
-          depths' field_depths
-        in Some(max)
-      end
+  let update_depths field_depths : unit State.t =
+    State.modify @@ 
+      ID_Map.union
+        (fun _ c1 c2 -> Some(max c1 c2))
+        field_depths
 
   (**
     Walk the AST for a particular {{!Layout.Types.simple_type} simple_type},
@@ -66,12 +61,11 @@ module Matching = struct
   let rec visit_type : simple_type -> int State.t =
     function
     | TRec record ->
-      let shape = record |> List.map fst |> ID_Set.of_list in
       let* field_depths = record |> traverse
         (fun (lbl, ty) -> let+ depth = visit_type ty in (lbl, depth)) in
       let field_depths' = field_depths |> List.to_seq |> ID_Map.of_seq in
       let rec_depth = field_depths |> List.map snd |> List.fold_left max 0 in
-      let+ () = update_depths shape field_depths'
+      let+ () = update_depths field_depths'
       in
         (1 + rec_depth)
 
@@ -89,12 +83,11 @@ module Matching = struct
     | BVal (VFun (_, expr)) -> visit_expr expr
 
     | BVal (VRec record) ->
-      let shape = record |> List.map fst |> ID_Set.of_list in
       let field_depths =
         record |> List.map (fun (lbl, _) -> (lbl, 0))
                |> List.to_seq
                |> ID_Map.of_seq
-      in update_depths shape field_depths
+      in update_depths field_depths
 
     | BMatch (_, branches) ->
       State.map ignore (branches |> traverse
@@ -124,7 +117,7 @@ module Matching = struct
     any record's depth {i also} satisfies that required by
     subtypes of that record (i.e. one with a subset of its fields).
   *)
-  let incorporate_subtypes by_shape =
+  (* let incorporate_subtypes by_shape =
     let shapes = List.map fst (ID_Set_Map.bindings by_shape) in
     let update_sub_shapes = shapes |> traverse
       (fun shape ->
@@ -134,7 +127,7 @@ module Matching = struct
           |> traverse (update_depths shape)
         ) *> State.pure ())
     in
-    fst (update_sub_shapes ID_Set_Map.empty)
+    fst (update_sub_shapes ID_Set_Map.empty) *)
 
   (**
     The main function exported by this module.
@@ -144,8 +137,7 @@ module Matching = struct
     set of constraints.
   *)
   let find_required_depths (ast : Ast.expr) =
-    let by_shape = fst (visit_expr ast ID_Set_Map.empty) in
-    incorporate_subtypes by_shape
+    fst (visit_expr ast ID_Map.empty)
 
 end
 
@@ -192,19 +184,19 @@ module FlowTracking = struct
     The runtime type of the rvalue, computed
     only as deeply as is required by the shape depths provided.
   *)
-  let type_of_shape (shape_depths : Matching.shape_depth_t) rv =
+  let type_of_shape (shape_depths : Matching.field_depth_t) rv =
     match Wrapper.extract rv with
     | RInt _ -> TInt
     | RBool b -> if b then TTrue else TFalse
     | RFun (_, _, _) -> TFun
     | RRec record ->
-        let record' = ID_Set.of_list (List.map fst record) in
-        match ID_Set_Map.find_opt record' shape_depths with
-        | None -> type_of ~depth:1 rv (* This case shouldn't occur in reality. *)
-        | Some(field_depths) ->
-          TRec (record |> List.map (fun (lbl, rv) ->
-            let depth = ID_Map.find lbl field_depths in
-            (lbl, type_of ~depth rv)))
+        let field_types = record 
+          |> ID_Map.mapi (fun k rv ->
+              let depth = ID_Map.find k shape_depths in
+              type_of ~depth rv)
+          |> ID_Map.bindings
+        in
+        TRec field_types
 
   (**
     The type used for our state.
@@ -214,7 +206,7 @@ module FlowTracking = struct
       env       : rvalue env;                (** Values in scope *)
       data_flow : ID_Set.t ID_Map.t;         (** The data dependency graph *)
       type_flow : Type_Set.t ID_Map.t;       (** Runtime type observations *)
-      shape_depths : Matching.shape_depth_t; (** The match depths used *)
+      field_depths : Matching.field_depth_t; (** The match depths used *)
     }
 
   module State = State_Util(struct type t = flow_state end)
@@ -274,8 +266,8 @@ module FlowTracking = struct
     (using {!type_of_shape}).
   *)
   let type_of' rv : simple_type State.t =
-    let+ depths = State.gets (fun s -> s.shape_depths) in
-    canonicalize_simple @@ type_of_shape depths rv
+    let+ { field_depths; _ } = State.get in
+    canonicalize_simple @@ type_of_shape field_depths rv
 
   (**
     Given a new environment to operate in,
@@ -348,10 +340,10 @@ module FlowTracking = struct
         original @@ RFun (env, id, expr)
 
     | VRec (record)  ->
-      let* record' = record |> traverse (fun (lbl, id) ->
-        let+ rv = lookup id in (lbl, rv))
+      let* record' = record 
+        |> traverse (fun (lbl, id) -> let+ rv = lookup id in (lbl, rv))
       in
-        original @@ RRec record'
+        original @@ RRec (record' |> List.to_seq |> ID_Map.of_seq)
 
   (**
     Evaluate a given {!type-Layout.Ast.operator} expression.
@@ -361,43 +353,50 @@ module FlowTracking = struct
     | OPlus (i1, i2) ->
         let$* RInt r1 = lookup' i1 in
         let$* RInt r2 = lookup' i2 in
-          original @@ RInt (r1 + r2)
+        original @@ RInt (r1 + r2)
 
     | OMinus (i1, i2) ->
         let$* RInt r1 = lookup' i1 in
         let$* RInt r2 = lookup' i2 in
-          original @@ RInt (r1 - r2)
+        original @@ RInt (r1 - r2)
 
     | OLess (i1, i2) ->
         let$* RInt r1 = lookup' i1 in
         let$* RInt r2 = lookup' i2 in
-          original @@ RBool (r1 < r2)
+        original @@ RBool (r1 < r2)
 
     | OEquals (i1, i2) ->
         let$* RInt r1 = lookup' i1 in
         let$* RInt r2 = lookup' i2 in
-          original @@ RBool (r1 = r2)
+        original @@ RBool (r1 = r2)
 
     | OAnd (i1, i2) ->
         let$* RBool r1 = lookup' i1 in
         let$* RBool r2 = lookup' i2 in
-          original @@ RBool (r1 && r2)
+        original @@ RBool (r1 && r2)
 
     | OOr (i1, i2) ->
         let$* RBool r1 = lookup' i1 in
         let$* RBool r2 = lookup' i2 in
-          original @@ RBool (r1 || r2)
+        original @@ RBool (r1 || r2)
 
     | ONot (i1)  ->
         let$* RBool r1 = lookup' i1 in
-         original @@ RBool (not r1)
+        original @@ RBool (not r1)
+    
+    | OAppend (id1, id2) ->
+        let$* RRec _r1 = lookup' id1 in
+        let$* RRec _r2 = lookup' id2 in
+        original @@ RRec (
+          ID_Map.union (fun _ _rv1 rv2 -> Some(rv2)) _r1 _r2
+        )
 
   (**
     Evaluate a {{!Layout.Ast.body.BProj} projection} expression.
   *)
   let [@warning "-8"] eval_proj id lbl : rvalue State.t =
     let$+ RRec record = lookup' id in
-    match List.assoc_opt lbl record with
+    match ID_Map.find_opt lbl record with
     | None     -> raise Type_Mismatch
     | Some(v)  -> v
 
@@ -460,7 +459,7 @@ module FlowTracking = struct
       env = [];
       data_flow = ID_Map.empty;
       type_flow = ID_Map.empty;
-      shape_depths = Matching.find_required_depths expr;
+      field_depths = Matching.find_required_depths expr;
     }
 
 end
@@ -591,6 +590,13 @@ module Tagging = struct
         a mapping from per-field union type tags
         to the resulting union type tag for the record.
       *)
+      
+      append_tables : type_tag Type_Tag_Pair_Map.t ID_Map.t;
+      (**
+        For each record append program point:
+        a mapping from the lhs and rhs type tags to
+        the resulting record's appropriate type tag.
+      *)
     }
   
 
@@ -699,11 +705,55 @@ module Tagging = struct
     | BVal (VRec record)    -> process_record pp record
     | BVal (VFun (_, expr)) -> visit_expr expr
 
+    | BOpr (OAppend (i1, i2)) -> process_append pp i1 i2
+
     | BMatch (id, branches) ->
         traverse (fun (_, expr) -> visit_expr expr) branches *>
         process_match pp id branches
 
     | _ -> State.pure ()
+
+  (**
+    Create the record append lookup table
+    for the given program point and appended records.
+  *)
+  and [@warning "-8"] process_append (pp : ident) (i1 : ident) (i2 : ident) =
+    let* ppt_id, ppt = type_of' pp
+    and+ i1t_id, i1t = type_of' i1
+    and+ i2t_id, i2t = type_of' i2 in
+
+    let tag_maps = i1t |> List.mapi(fun u1 (TRec t1) ->
+      let tag1 = Tag { t_id = i1t_id; u_id = u1 } in
+      let t1' = t1 |> List.to_seq |> ID_Map.of_seq in
+
+      i2t |> List.mapi (fun u2 (TRec t2) ->
+        let tag2 = Tag { t_id = i2t_id; u_id = u2 } in
+        let t2' = t2 |> List.to_seq |> ID_Map.of_seq in
+        
+        let ty' = TRec (
+          ID_Map.union (fun _ _ t2 -> Some(t2)) t1' t2'
+          |> ID_Map.bindings
+        ) in
+        let u_id = find_retagging ppt ty' ~default:(-1) in
+        if u_id != -1 then
+          Type_Tag_Pair_Map.singleton (tag1, tag2)
+            (Tag { t_id = ppt_id; u_id; })
+        else
+          Type_Tag_Pair_Map.empty
+      )
+
+    ) in
+    let table = tag_maps
+      |> List.flatten
+      |> List.fold_left
+      (Type_Tag_Pair_Map.union (fun _ _ _ -> None)) (* safe, these are disjoint *)
+        Type_Tag_Pair_Map.empty
+    in
+    State.modify (fun s -> { s with 
+      append_tables = s.append_tables
+        |> ID_Map.add pp table
+    })
+
 
   (**
     Create the record construction lookup table
@@ -728,9 +778,12 @@ module Tagging = struct
           ID_Map.bindings record |> traverse (fun (lbl, tag) ->
             let+ ty = tag_type tag in (lbl, ty)) 
         in
-        let result_u_id = find_retagging ~default:(-1) ppt (TRec rty) in
+        let u_id = find_retagging ~default:(-1) ppt (TRec rty) in
+        if u_id != -1 then
           Field_Tags_Map.singleton record
-            (Tag { t_id = ppt_id; u_id = result_u_id })
+            (Tag { t_id = ppt_id; u_id; })
+        else
+          Field_Tags_Map.empty
     in
     let field_map =
       field_maps |> List.fold_left
@@ -774,6 +827,7 @@ module Tagging = struct
       visit_expr expr { type_ids; pp_types; }
       {
         record_tables = ID_Map.empty;
+        append_tables = ID_Map.empty;
         match_tables = ID_Map.empty;
       }
     in
@@ -794,6 +848,7 @@ type full_analysis =
     type_ids: simple_type list Int_Map.t; (** Universe of Types. *)
     match_tables: int Type_Tag_Map.t ID_Map.t; (** Match lookup tables. *)
     record_tables: type_tag Field_Tags_Map.t ID_Map.t; (** Record lookup tables. *)
+    append_tables : type_tag Type_Tag_Pair_Map.t ID_Map.t; (** Record append tables. *)
   }
 
 (**
@@ -806,7 +861,7 @@ let full_analysis_of test_case =
   let (type_ids, pp_types) = 
     Typing.assign_program_point_types
       flow.data_flow flow.type_flow in
-  let Tagging.{ record_tables; match_tables; } =
+  let Tagging.{ record_tables; match_tables; append_tables; } =
     Tagging.compute_tag_tables pp_types type_ids test_case in
   {
     flow;
@@ -815,6 +870,7 @@ let full_analysis_of test_case =
     type_ids;
     match_tables;
     record_tables;
+    append_tables;
   }
   
 
@@ -1001,14 +1057,13 @@ module TaggedEvaluator = struct
       let* record' =
         record |> traverse (fun (lbl, id) -> let+ rv = lookup id in (lbl, rv)) 
       in
-      let field_tags =
-        record' |> List.to_seq
-                |> Seq.map (fun (lbl, rv) -> (lbl, fst rv))
-                |> ID_Map.of_seq
-      in
+      let record' = record' |> List.to_seq |> ID_Map.of_seq in
+      let field_tags = ID_Map.map fst record' in
       let+ { record_tables; _ } = State.ask in
-      let record_table = ID_Map.find pp record_tables in
-      let tag = Field_Tags_Map.find field_tags record_table in
+      let tag = record_tables
+        |> ID_Map.find pp
+        |> Field_Tags_Map.find field_tags
+      in
       (tag, RRec record')
 
   (**
@@ -1016,7 +1071,7 @@ module TaggedEvaluator = struct
   *)
   let [@warning "-8"] eval_proj id lbl =
     let$+ (_, RRec record) = lookup id in
-    match List.assoc_opt lbl record with
+    match ID_Map.find_opt lbl record with
     | None     -> raise Type_Mismatch
     | Some(v)  -> v
   
@@ -1064,6 +1119,16 @@ module TaggedEvaluator = struct
       let r2 = not r1 in
       tagged' pp r2 @@ RBool r2
 
+    | OAppend (i1, i2) ->
+      let$* (t1, RRec r1) = lookup i1 in
+      let$* (t2, RRec r2) = lookup i2 in
+      let+ { append_tables; _ } = State.ask in
+      let tag = append_tables
+        |> ID_Map.find pp
+        |> Type_Tag_Pair_Map.find (t1, t2)
+      in tag, RRec 
+        (ID_Map.union (fun _ _ rv2 -> Some(rv2)) r1 r2)
+
   (**
     Evaluate a single {!Ast.clause} in the expression.
   *)
@@ -1093,9 +1158,11 @@ module TaggedEvaluator = struct
   *)
   and eval_match pp id branches =
     let$* { match_tables; _ } = State.ask in
-    let match_table = ID_Map.find pp match_tables in
     let* (tag, _) = lookup id in
-    let branch = Type_Tag_Map.find tag match_table in
+    let branch = match_tables
+      |> ID_Map.find pp
+      |> Type_Tag_Map.find tag
+    in
     eval_t (snd @@ List.nth branches branch)
 
   (**

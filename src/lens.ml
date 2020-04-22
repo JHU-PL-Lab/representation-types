@@ -23,7 +23,7 @@ let compose l1 l2 =
     set = (fun b s -> s |> set l1 (s |> get l1 |> set l2 b));
   }
 
-module Infix = struct
+module Syntax = struct
   let ( ^. ) s l   = get  l   s
   let ( =. ) l b s = set  l b s
   let ( %. ) l f s = over l f s

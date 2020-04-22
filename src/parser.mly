@@ -29,7 +29,7 @@
 %token LBRACE RBRACE LPAREN RPAREN SEMICOLON COLON
 %token LTHAN EQUALS PROJ_DOT GETS
 
-%token OP_PLUS OP_MINUS UNIV_PAT
+%token OP_PLUS OP_MINUS OP_APPEND UNIV_PAT
 
 %token KW_MATCH KW_WITH KW_FUN KW_AND KW_OR KW_NOT
 %token KW_LET KW_IN KW_END KW_INT
@@ -144,6 +144,11 @@ let expr3 :=
     let+ i1 = emit' e1
     and+ i2 = emit' e2
     in BOpr (OMinus (i1, i2))
+  }
+  | (e1, e2) = sep_pair(expr3, OP_APPEND, expr4); {
+    let+ i1 = emit' e1
+    and+ i2 = emit' e2
+    in BOpr (OAppend (i1, i2))
   }
   | KW_NOT; e1 = expr4; {
     let+ i1 = emit' e1

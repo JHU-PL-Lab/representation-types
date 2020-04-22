@@ -2,12 +2,22 @@
 (**
   Pretty-printers for all of the
   instantiations of {!Stdlib.Map} and {!Stdlib.Set}
-  found in {!Layout.Util}.
+  found in {!Layout.Util} (among other things).
 
   These are automatically installed in the toplevel
   when this module is opened, thanks to the {i really}
   convenient [[@@ocaml.toplevel_printer]] annotation.
 *)
+
+
+val pp_type_tag : Format.formatter -> Types.type_tag -> unit
+  [@@ocaml.toplevel_printer]
+
+val pp_simple_type : Format.formatter -> Types.simple_type -> unit
+  [@@ocaml.toplevel_printer]
+
+
+  
 
 val pp_id_set : Format.formatter -> Util.ID_Set.t -> unit
   [@@ocaml.toplevel_printer]
@@ -46,6 +56,11 @@ val pp_type_set_map :
 val pp_type_tag_map :
   (Format.formatter -> 'a -> unit) ->
   Format.formatter -> 'a Util.Type_Tag_Map.t -> unit
+  [@@ocaml.toplevel_printer]
+
+val pp_type_tag_pair_map :
+  (Format.formatter -> 'a -> unit) ->
+  Format.formatter -> 'a Util.Type_Tag_Pair_Map.t -> unit
   [@@ocaml.toplevel_printer]
 
 val pp_field_tags_map :

@@ -25,23 +25,29 @@ let rec for_some2 l1 l2 f =
       if f e1 e2 then true else for_some2 l1' l2' f
   | _ -> false
   
-
-
-
 type label = string
   [@@deriving show, eq, ord]
 
 type simple_type =
-  | TInt | TTrue | TFalse | TFun
-  | TBottom | TUniv | TRec of (label * simple_type) list
-  [@@deriving show, eq, ord]
+  | TBottom 
+  | TUniv 
+  | TInt 
+  | TFun
+  | TTrue | TFalse
+  | TRec of (label * simple_type) list
+  [@@deriving show { with_path = false }, eq, ord]
 
 type type_id = int [@@deriving show, eq, ord]
 type union_id = int [@@deriving show, eq, ord]
 
 type type_tag =
   Tag of { t_id: type_id; u_id: union_id }
-  [@@deriving show, eq, ord]
+  [@@deriving eq, ord]
+
+let pp_type_tag fmt (Tag tag) =
+  Format.fprintf fmt "%a#%a"
+    pp_type_id tag.t_id
+    pp_union_id tag.u_id
 
   
 let rec is_non_conflicting_simple (t1 : simple_type) (t2 : simple_type) : bool =

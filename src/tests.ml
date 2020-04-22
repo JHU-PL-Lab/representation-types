@@ -14,6 +14,13 @@ let parse s =
   Parser.main Lexer.read (Lexing.from_string s)
 
 
+let test_equal_result expr =
+  let open Eval in
+  let analysis = full_analysis_of expr in
+  let (_, rv) = TaggedEvaluator.eval expr analysis in
+  (analysis.result = rv) 
+  
+
 (* 1 : basic operations *)
 let t1 = parse "
   let x = 10 in
@@ -90,7 +97,7 @@ let t6 = parse "
     x1.a + x3.a.a
 "
 
-(* building and folding a list *)
+(* 7 : building and folding a list *)
 let t7 = parse "
   let y = fun f ->
     let o = fun x -> f (fun arg -> x x arg)
@@ -114,7 +121,7 @@ let t7 = parse "
   sum (make 10) + sum (make 20)
 "
 
-(* test for match pattern depth calculation *)
+(* 8 : test for match pattern depth calculation *)
 let t8 = parse "
   match {} with
   (* {a} -> {a -> 3} *)
@@ -134,7 +141,7 @@ let t8 = parse "
   end
 "
 
-(* test for pattern match subtyping depth requirement *)
+(* 9 : test for pattern match subtyping depth requirement *)
 let t9 = parse "
   match {d = {f = 0}; e = 0} with
   | {b: {b: *}} -> 0
@@ -146,7 +153,7 @@ let t9 = parse "
   end
 "
 
-(* worst case record tables *)
+(* 10 : worst case record tables *)
 let t10 = parse "
   let f = fun r -> r in
 
@@ -187,13 +194,81 @@ let t10 = parse "
   end
 "
 
+(* 11 : basic record appending *)
+let t11 = parse "
+  let r1 = { a = 10; b = 20 } in
+  let r2 = { a = {}; c = false } in
+  let r3 = { b = 30; c = true } in
+  r1 @ r2 @ r3
+"
+
+(* 12 : OO-like record methods *)
+let t12 = parse "
+  let r1 = {
+    x = fun this -> this.y this + this.z this;
+    y = fun this -> this.z this + this.z this;
+    z = fun this -> 10
+  } in
+
+  let r2 = fun super -> super @ {
+    y = fun this -> super.y this - this.w this;
+    w = fun this -> 1
+  } in
+
+  let get_x = fun r -> r.x r in
+
+  let x1 = get_x r1 in
+  let x2 = get_x (r2 r1) in
+  let x3 = get_x (r2 (r2 r1)) in
+  x1 + x2 + x3
+"
+
+(* 13 : match on appended records *)
+let t13 = parse "
+  let defaults = { f1 = false; f2 = true } in
+  let to_num = fun r ->
+    match defaults @ r with
+    | { f1 : false; f2 : false } -> 0
+    | { f1 : false; f2 : true  } -> 1
+    | { f1 : true;  f2 : false } -> 2
+    | { f1 : true;  f2 : true  } -> 3
+    end
+  in
+    to_num {}
+  + to_num { f1 = true }
+  + to_num { f1 = false; f2 = false }
+  + to_num { f3 = 30 }
+"
+
+(* 14 : match on chained record appends *)
+let t14 = parse "
+  let append3 = 
+    fun r1 -> fun r2 -> fun r3 ->
+      r1 @ r2 @ r3
+  in
+
+  let do_match = fun r ->
+    match r with
+    | { a: *; b: *; c: * } -> 0
+    | { a: *; b: *; d: * } -> 1
+    | { a: *; c: *; d: * } -> 2
+    | { b: *; c: *; d: * } -> 3
+    | * -> 4
+    end
+  in
+
+  let x1 = { a = 1 } in
+  let x2 = { b = 2 } in
+  let x3 = { c = 3 } in
+  let x4 = { d = 4 } in
+
+  do_match (append3 x1 x2 x3) +
+  do_match (append3 x1 x2 x4) +
+  do_match (append3 x1 x3 x4) +
+  do_match (append3 x2 x3 x4)
+"
+
 let%test_module "interpreter validation" = (module struct
-  
-  let test_equal_result expr =
-    let open Eval in
-    let analysis = full_analysis_of expr in
-    let (_, rv) = TaggedEvaluator.eval expr analysis in
-    (analysis.result = rv) 
 
   let%test "t1 (basic operations)" = test_equal_result t1
   
@@ -214,5 +289,13 @@ let%test_module "interpreter validation" = (module struct
   let%test "t9 (match subtype depth)" = test_equal_result t9
 
   let%test "t10 (exponential record table)" = test_equal_result t10
+  
+  let%test "t11 (basic record appending)" = test_equal_result t11
+  
+  let%test "t12 (OO-like record methods)" = test_equal_result t12
+
+  let%test "t13 (match on appended records)" = test_equal_result t13
+
+  let%test "t14 (match on chained record appends)" = test_equal_result t14
   
 end)

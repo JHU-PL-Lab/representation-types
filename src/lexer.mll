@@ -6,16 +6,13 @@
 }
 
 let digit = ['0'-'9']
-let int = digit+
+let int = ('+' | '-')? digit+
 
 let space = [' ' '\t' '\n']+
 
 let letter = ['a'-'z' 'A'-'Z']
 
 let ident = letter (letter | digit | '_' )* '\''*
-
-let comment_opener = "(*"
-
 
 rule read =
   parse
@@ -38,6 +35,7 @@ rule read =
   | "->" { ARROW }
   | '+' { OP_PLUS }
   | '-' { OP_MINUS }
+  | '@' { OP_APPEND }
   | ident {
     match lexeme lexbuf with
     | "and"   -> KW_AND

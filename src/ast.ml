@@ -27,6 +27,7 @@ type operator =
   | OAnd    of ident * ident (** Boolean Conjunction. *)
   | OOr     of ident * ident (** Boolean Disjunction. *)
   | ONot    of ident         (** Boolean Negation. *)
+  | OAppend of ident * ident (** Record Append *)
   [@@deriving show]
   
 (**
@@ -38,7 +39,7 @@ type value =
   | VFalse                       (** Boolean False. *)
   | VRec of (label * ident) list (** Records. *)
   | VFun of ident * expr         (** Lambdas. *)
-  [@@deriving show]
+  [@@deriving show { with_path = false }]
 (**
   Whether the representation of
   {!VTrue} and {!VFalse} should remain separate
@@ -51,20 +52,20 @@ type value =
   which must be associated with a program point.
 *)
 and body =
-  | BVar   of ident          (** Environment Lookup. *)
-  | BVal   of value          (** Static Value. *)
-  | BOpr   of operator       (** Primitive Operator. *)
-  | BApply of ident * ident  (** Function Application. *)
-  | BProj  of ident * label  (** Field Projection. *)
-  | BMatch of ident * (simple_type * expr) list (** Match Expression. *)
-  [@@deriving show]
+  | BVar    of ident          (** Environment Lookup. *)
+  | BVal    of value          (** Static Value. *)
+  | BOpr    of operator       (** Primitive Operator. *)
+  | BApply  of ident * ident  (** Function Application. *)
+  | BProj   of ident * label  (** Field Projection. *)
+  | BMatch  of ident * (simple_type * expr) list (** Match Expression. *)
+  [@@deriving show { with_path = false }]
 
 (**
   A clause merely associates the name of a program point
   to its body.
 *)
 and clause = Cl of ident * body
-  [@@deriving show]
+  [@@deriving show { with_path = false }]
 
 (**
   An expression is merely an ordered string of clauses,
@@ -90,15 +91,15 @@ type 'rvalue rvalue_spec =
   | RInt  of int
   | RBool of bool
   
-  | RRec  of (label * 'rvalue) list
+  | RRec  of ('rvalue ID_Map.t [@polyprinter Util_pp.pp_id_map])
   | RFun  of 'rvalue env * ident * expr
-  [@@deriving show]
+  [@@deriving show { with_path = false }]
 
 (**
   The type of undecorated rvalues.
 *)
 type rvalue' = rvalue' rvalue_spec
-  [@@deriving show]
+  [@@deriving show { with_path = false }]
 
 
 (**
@@ -142,7 +143,7 @@ struct
     |   TFun, RFun (_, _, _) -> true
     | TRec (record), RRec (record') ->
         for_all record (fun (lbl, pat') ->
-          match List.assoc_opt lbl record' with
+          match ID_Map.find_opt lbl record' with
           | None      -> false
           | Some(rv') -> matches pat' rv'  
         )
@@ -160,8 +161,10 @@ struct
     | RBool b -> if b then TTrue else TFalse
     | RFun (_, _, _) -> TFun
     | RRec record ->
-        TRec (record |> List.map (fun (lbl, rv) -> 
-          (lbl, type_of ~depth:(depth - 1) rv)))
+        TRec ( record 
+          |> ID_Map.map (type_of ~depth:(depth - 1))
+          |> ID_Map.bindings
+        )
 
   (**
     Unwrap the comonadic layers and return
@@ -174,8 +177,8 @@ struct
       | RInt i  -> RInt i
       | RBool b -> RBool b
       | RRec record ->
-          RRec (List.map (fun (lbl, rv) ->
-            (lbl, unwrap_rvalue rv)) record)
+          RRec (ID_Map.map unwrap_rvalue record)
+
       | RFun (env, id, body) ->
           RFun (unwrap_env env, id, body)
 

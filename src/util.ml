@@ -11,6 +11,7 @@
 module Diff_list = struct
   type 'a t =
     { fold : 'b. ('a -> 'b -> 'b) -> 'b -> 'b }
+    [@@unboxed] 
 
   let cons a l =
     { fold = fun c n -> c a (l.fold c n) }
@@ -23,6 +24,9 @@ module Diff_list = struct
 
   let to_list l1 =
     l1.fold (fun x xs -> x :: xs) []
+
+  let from_list l1 =
+    { fold = fun c n -> List.fold_right c l1 n }
 
   let concat ll1 =
     ll1.fold (++) nil
@@ -100,6 +104,14 @@ module Type_Set_Map = Map.Make(Type_Set)
 module Type_Tag_Map = Map.Make(struct
   type t = Types.type_tag
   let compare = Types.compare_type_tag
+end)
+
+module Type_Tag_Pair_Map = Map.Make(struct
+  type t = Types.type_tag * Types.type_tag
+  let compare (t11, t12) (t21, t22) =
+    match Types.compare_type_tag t11 t21 with
+    | 0 -> Types.compare_type_tag t12 t22
+    | other -> other
 end)
 
 module Field_Tags_Map = Map.Make(struct
