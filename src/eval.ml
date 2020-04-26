@@ -20,11 +20,11 @@ module Matching = struct
     
   (**
     Our result value, a mapping
-    from each record shape to
-    the depths needed for each of its fields.
+    from each record field to
+    the depths needed for its type in order
+    to perform pattern matching reliably.
   *)
   type field_depth_t = int ID_Map.t
-  type shape_depth_t = field_depth_t ID_Set_Map.t
 
   (**
     We work in the state monad mainly
@@ -61,8 +61,9 @@ module Matching = struct
   let rec visit_type : simple_type -> int State.t =
     function
     | TRec record ->
-      let* field_depths = record |> traverse
-        (fun (lbl, ty) -> let+ depth = visit_type ty in (lbl, depth)) in
+      let* field_depths = record |> traverse (fun (lbl, ty) -> 
+        let+ depth = visit_type ty in (lbl, depth)) 
+      in
       let field_depths' = field_depths |> List.to_seq |> ID_Map.of_seq in
       let rec_depth = field_depths |> List.map snd |> List.fold_left max 0 in
       let+ () = update_depths field_depths'
@@ -90,10 +91,12 @@ module Matching = struct
       in update_depths field_depths
 
     | BMatch (_, branches) ->
-      State.map ignore (branches |> traverse
-        (fun (ty, expr) ->
-          visit_type ty *>
-          visit_expr expr))
+      State.map ignore (
+        branches |> traverse
+          (fun (ty, expr) ->
+            visit_type ty *>
+            visit_expr expr)
+      )
 
     | _ -> State.pure ()
   
@@ -111,24 +114,6 @@ module Matching = struct
     traverse visit_clause expr *>
     State.pure ()
         
-  (**
-    Given the depths for each record shape in [by_shape],
-    return a new depth requirement for each such that
-    any record's depth {i also} satisfies that required by
-    subtypes of that record (i.e. one with a subset of its fields).
-  *)
-  (* let incorporate_subtypes by_shape =
-    let shapes = List.map fst (ID_Set_Map.bindings by_shape) in
-    let update_sub_shapes = shapes |> traverse
-      (fun shape ->
-        let open Set_Util(ID_Set) in
-        (powerset shape
-          |> List.filter_map (fun s -> ID_Set_Map.find_opt s by_shape)
-          |> traverse (update_depths shape)
-        ) *> State.pure ())
-    in
-    fst (update_sub_shapes ID_Set_Map.empty) *)
-
   (**
     The main function exported by this module.
     From the provided [ast], compute the required

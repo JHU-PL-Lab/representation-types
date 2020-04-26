@@ -1,0 +1,7 @@
+let f1 = fun a1 -> fun a2 ->
+    a1 + a2
+in
+let f3 = f1 10 in
+let x1 = f3 20 in
+let x3 = f3 200 in
+x3

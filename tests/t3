@@ -1,0 +1,5 @@
+let t = true in
+let f = false in
+let r = { x = { a = t; b = f } } in
+let q = r.x.b in
+q

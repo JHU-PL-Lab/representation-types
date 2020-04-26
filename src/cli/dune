@@ -1,0 +1,18 @@
+
+(executable
+   (name lti)
+   (modules lti)
+   (libraries layout)
+   (modes native))
+
+
+(env
+    (dev
+        (flags (:standard))
+        (ocamlopt_flags 
+            (:standard 
+             -O3 -afl-instrument
+             -cc afl-gcc )))
+    (release
+        (flags (:standard))
+        (ocamlopt_flags (:standard -O3))))

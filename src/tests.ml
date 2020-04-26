@@ -124,18 +124,14 @@ let t7 = parse "
 (* 8 : test for match pattern depth calculation *)
 let t8 = parse "
   match {} with
-  (* {a} -> {a -> 3} *)
+  (* {a -> 2} *)
   | { a: { a: { a: * } } } -> 0 
-
-  (* {b} -> {b -> 5}; {a} -> {a -> 4} *)
-  | { b: { a: { a: { a: { a: * }}}}} -> 0
-
-  (*
-    shape {a; b} is distinct from {a} or {b}
-    but: it's a subtype of both, inheriting constraints:
-    {a; b} -> {a -> 4; b -> 5}
-  *)
+  
+  (* {a -> 2}; {b -> 1} *)
   | { a: { a: { a: * }; b: { b: * } }} -> 0
+
+  (* {a -> 3}; {b -> 4} *)
+  | { b: { a: { a: { a: { a: * }}}}} -> 0
   
   | * -> 0
   end

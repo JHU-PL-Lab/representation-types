@@ -87,7 +87,7 @@ and 'v env = (ident * 'v) list
   type for their parameter to act as a way
   of extending their structure as need be.
 *)
-type 'rvalue rvalue_spec =
+type ('rvalue) rvalue_spec =
   | RInt  of int
   | RBool of bool
   
@@ -98,7 +98,7 @@ type 'rvalue rvalue_spec =
 (**
   The type of undecorated rvalues.
 *)
-type rvalue' = rvalue' rvalue_spec
+type rvalue' = (rvalue') rvalue_spec
   [@@deriving show { with_path = false }]
 
 
@@ -122,7 +122,7 @@ struct
     the comonadic environment supplied by {!Wrapper}.
   *)
   type rvalue = rvalue rvalue_spec Wrapper.t
-  
+
   (**
     An abbreviation for convenience so that
     one can reference the 'unwrapped' type of

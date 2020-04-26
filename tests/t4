@@ -1,0 +1,11 @@
+let y = fun f ->
+    let o = fun x -> f (fun arg -> x x arg)
+    in o o   
+in
+let sum = y (fun sum -> fun n ->
+    match n == 0 with
+    | false -> n + sum (n - 1)
+    | true  -> 0
+    end)
+in
+sum 10

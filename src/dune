@@ -24,9 +24,12 @@
 
 (env
    (dev 
-      (flags (:standard 
-         -w -23-33-38-39-66
-         -rectypes))))
+      (flags (:standard -w -23-33-38-39-66 -rectypes))
+      (ocamlopt_flags (:standard -O3 -afl-instrument)))
+
+   (release
+      (flags (:standard -w -23-33-38-39-66 -rectypes))
+      (ocamlopt_flags (:standard -O3))))
 
 (ocamllex
    (modules lexer))

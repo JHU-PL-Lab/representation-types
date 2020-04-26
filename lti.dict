@@ -1,0 +1,33 @@
+#
+# AFL dictionary for the syntax defined for layout-types
+#
+
+kw_and="and"
+kw_end="end"
+kw_false="false"
+kw_fun="fun"
+kw_in="in"
+kw_int="int"
+kw_let="let"
+kw_match="match"
+kw_not="not"
+kw_or="or"
+kw_true="true"
+kw_with="with"
+kw_arrow="->"
+kw_univ="*"
+
+misc_empty="{}"
+misc_value="{a = 0; b = 0}"
+misc_type="{a : *; b : *}"
+misc_fun="fun x -> "
+misc_proj="r.f"
+misc_let="let x = y in z"
+misc_paren="(x)"
+misc_apply="f x"
+
+op_plus=" + "
+op_minus=" - "
+op_lthan=" < "
+op_equal=" == "
+op_append=" @ "

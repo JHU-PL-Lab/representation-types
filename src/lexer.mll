@@ -3,6 +3,8 @@
   open Lexing
   open Parser
 
+  exception Error
+
 }
 
 let digit = ['0'-'9']
@@ -37,21 +39,22 @@ rule read =
   | '-' { OP_MINUS }
   | '@' { OP_APPEND }
   | ident {
-    match lexeme lexbuf with
-    | "and"   -> KW_AND
-    | "end"   -> KW_END
-    | "false" -> KW_FALSE
-    | "fun"   -> KW_FUN
-    | "in"    -> KW_IN
-    | "int"   -> KW_INT
-    | "let"   -> KW_LET
-    | "match" -> KW_MATCH
-    | "not"   -> KW_NOT
-    | "or"    -> KW_OR
-    | "true"  -> KW_TRUE
-    | "with"  -> KW_WITH
-    | other   -> IDENTIFIER(other)
-  }
+      match lexeme lexbuf with
+      | "and"   -> KW_AND
+      | "end"   -> KW_END
+      | "false" -> KW_FALSE
+      | "fun"   -> KW_FUN
+      | "in"    -> KW_IN
+      | "int"   -> KW_INT
+      | "let"   -> KW_LET
+      | "match" -> KW_MATCH
+      | "not"   -> KW_NOT
+      | "or"    -> KW_OR
+      | "true"  -> KW_TRUE
+      | "with"  -> KW_WITH
+      | other   -> IDENTIFIER(other)
+    }
+  | _ { raise Error }
 
 and read_comment depth =
   parse
