@@ -4,10 +4,17 @@ open Layout
 
 let () =
   let text = Stdio.In_channel.input_all Stdio.stdin in
+  let k = try int_of_string Sys.argv.(1) with _ -> 0 in
   try
     let prog = Tests.parse text in
-    let full = Eval.full_analysis_of prog in 
-    Format.printf "%a\n" Util_pp.pp_rvalue' full.result
+    let full = Eval.full_analysis_of ~k prog in 
+    full.results
+      |> List.map Eval.FlowTracking.Wrapper.extract
+      |> List.sort_uniq compare 
+      |> List.iter (Format.printf "%a@." (Util_pp.pp_avalue Util_pp.pp_context));
+    Format.printf "---------------\n";
+    full.log
+      |> List.iter (Format.printf "%s\n");
   with
     | Eval.FlowTracking.Open_Expression ->
         Format.eprintf "error: Open Expression."

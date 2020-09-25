@@ -18,9 +18,14 @@ let ident = letter (letter | digit | '_' )* '\''*
 
 rule read =
   parse
-  | space { read lexbuf }
   | eof   { EOF }
-  | int   { INTEGER (lexeme lexbuf |> int_of_string) }
+  | space { read lexbuf }
+  | int   { 
+    (* In case the integer value itself is too large *)
+    try INTEGER (lexeme lexbuf |> int_of_string)
+    with Failure _ -> raise Error
+  }
+
   | "(*"  { read_comment 0 lexbuf }
   | '*' { UNIV_PAT }
   | '.' { PROJ_DOT }

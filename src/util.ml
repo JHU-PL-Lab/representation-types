@@ -99,6 +99,7 @@ module Type_Map = Map.Make(struct
 end)
 
 module ID_Set_Map = Map.Make(ID_Set)
+module Int_Set_Map = Map.Make(Int_Set)
 module Type_Set_Map = Map.Make(Type_Set)
 
 module Type_Tag_Map = Map.Make(struct
@@ -202,6 +203,10 @@ let pp_int_map pp_val =
 let pp_id_set_map pp_val =
   let open Map_Pretty(ID_Set_Map) in
   pp_map pp_id_set pp_val
+
+let pp_int_set_map pp_val =
+  let open Map_Pretty(Int_Set_Map) in
+  pp_map pp_int_set pp_val
   
 let pp_type_set_map pp_val =
   let open Map_Pretty(Type_Set_Map) in

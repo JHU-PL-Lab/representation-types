@@ -39,12 +39,26 @@ val pp_body : Ast.body formatter
 val pp_clause : Ast.clause formatter
   [@@ocaml.toplevel_printer]
 
+val pp_expr : Ast.expr formatter
+  [@@ocaml.toplevel_printer]
+
+val pp_context : Ast.context formatter
+  [@@ocaml.toplevel_printer]
+
 val pp_rvalue' : Ast.rvalue' formatter
   [@@ocaml.toplevel_printer]
 
 val pp_rvalue_spec : ('a, 'a Ast.rvalue_spec) formatter1
   [@@ocaml.toplevel_printer]
   
+val pp_avalue : ('a, 'a Ast.avalue) formatter1
+  [@@ocaml.toplevel_printer]
+
+(* 
+val pp_avalue_spec : ('a, 'a Ast.avalue_spec) formatter1
+  [@@ocaml.toplevel_printer]
+*)
+
 
 val pp_id_set : Util.ID_Set.t formatter
   [@@ocaml.toplevel_printer]
@@ -65,6 +79,9 @@ val pp_int_map : ('a, 'a Util.Int_Map.t) formatter1
   [@@ocaml.toplevel_printer]
 
 val pp_id_set_map : ('a, 'a Util.ID_Set_Map.t) formatter1
+  [@@ocaml.toplevel_printer]
+
+val pp_int_set_map : ('a, 'a Util.Int_Set_Map.t) formatter1
   [@@ocaml.toplevel_printer]
 
 val pp_type_set_map : ('a, 'a Util.Type_Set_Map.t) formatter1

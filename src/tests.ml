@@ -6,6 +6,8 @@
   the tagged interpreter on the values of expressions.
 *)
 
+open Types
+open Ast
 
 (**
   Helper to parse a nicer syntax into {!Ast.expr} form.
@@ -14,11 +16,12 @@ let parse s =
   Parser.main Lexer.read (Lexing.from_string s)
 
 
-let test_equal_result expr =
+let test_eval_tagged expr =
   let open Eval in
-  let analysis = full_analysis_of expr in
-  let (_, rv) = TaggedEvaluator.eval expr analysis in
-  (analysis.result = rv) 
+  let analysis = full_analysis_of ~k:0 expr in
+  try ignore (TaggedEvaluator.eval expr analysis); true with
+  | TaggedEvaluator.Interpreters_Out_Of_Step -> false
+
   
 
 (* 1 : basic operations *)
@@ -252,32 +255,32 @@ let t14 = parse "
 
 let%test_module "interpreter validation" = (module struct
 
-  let%test "t1 (basic operations)" = test_equal_result t1
+  let%test "t1 (basic operations)" = test_eval_tagged t1
   
-  let%test "t2 (closures)" = test_equal_result t2
+  let%test "t2 (closures)" = test_eval_tagged t2
 
-  let%test "t3 (records)" = test_equal_result t3
+  let%test "t3 (records)" = test_eval_tagged t3
 
-  let%test "t4 (y-combinator)" = test_equal_result t4
+  let%test "t4 (y-combinator)" = test_eval_tagged t4
 
-  let%test "t5 (patterns)" = test_equal_result t5
+  let%test "t5 (patterns)" = test_eval_tagged t5
 
-  let%test "t6 (projections)" = test_equal_result t6
+  let%test "t6 (projections)" = test_eval_tagged t6
 
-  let%test "t7 (making/folding lists)" = test_equal_result t7
+  let%test "t7 (making/folding lists)" = test_eval_tagged t7
 
-  let%test "t8 (match depth calculation)" = test_equal_result t8
+  let%test "t8 (match depth calculation)" = test_eval_tagged t8
 
-  let%test "t9 (match subtype depth)" = test_equal_result t9
+  let%test "t9 (match subtype depth)" = test_eval_tagged t9
 
-  let%test "t10 (exponential record table)" = test_equal_result t10
+  let%test "t10 (exponential record table)" = test_eval_tagged t10
   
-  let%test "t11 (basic record appending)" = test_equal_result t11
+  let%test "t11 (basic record appending)" = test_eval_tagged t11
   
-  let%test "t12 (OO-like record methods)" = test_equal_result t12
+  let%test "t12 (OO-like record methods)" = test_eval_tagged t12
 
-  let%test "t13 (match on appended records)" = test_equal_result t13
+  let%test "t13 (match on appended records)" = test_eval_tagged t13
 
-  let%test "t14 (match on chained record appends)" = test_equal_result t14
+  let%test "t14 (match on chained record appends)" = test_eval_tagged t14
   
 end)
