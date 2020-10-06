@@ -80,6 +80,22 @@ module Union_find = struct
 
 end
 
+
+let rec take k =
+  function
+  | x::xs when k > 0 -> x :: take (k - 1) xs
+  | _ -> []
+
+let take_last k l =
+  List.fold_right
+    (fun a (n, l) -> 
+      if n = 0 
+      then (n,      l)
+      else (n-1, a::l)) 
+    l (k, [])
+  |> snd
+
+
 (** {1 Various maps and sets} *)
 
 module ID_Map = Map.Make(String)
@@ -89,13 +105,11 @@ module Int_Map = Map.Make(Int)
 module Int_Set = Set.Make(Int)
 
 module Type_Set = Set.Make(struct
-  type t = Types.simple_type
-  let compare = Types.compare_simple_type
+  type t = Types.simple_type [@@deriving ord]
 end)
 
 module Type_Map = Map.Make(struct
-  type t = Types.simple_type
-  let compare = Types.compare_simple_type
+  type t = Types.simple_type [@@deriving ord]
 end)
 
 module ID_Set_Map = Map.Make(ID_Set)
@@ -103,21 +117,15 @@ module Int_Set_Map = Map.Make(Int_Set)
 module Type_Set_Map = Map.Make(Type_Set)
 
 module Type_Tag_Map = Map.Make(struct
-  type t = Types.type_tag
-  let compare = Types.compare_type_tag
+  type t = Types.type_tag [@@deriving ord]
 end)
 
 module Type_Tag_Pair_Map = Map.Make(struct
-  type t = Types.type_tag * Types.type_tag
-  let compare (t11, t12) (t21, t22) =
-    match Types.compare_type_tag t11 t21 with
-    | 0 -> Types.compare_type_tag t12 t22
-    | other -> other
+  type t = Types.type_tag * Types.type_tag [@@deriving ord]
 end)
 
 module Field_Tags_Map = Map.Make(struct
-  type t = Types.type_tag ID_Map.t
-  let compare = ID_Map.compare Types.compare_type_tag
+  type t = Types.type_tag ID_Map.t [@@deriving ord]
 end)
 
 (**

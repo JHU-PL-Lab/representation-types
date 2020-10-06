@@ -14,9 +14,10 @@
       types
       util
       util_pp)
-   (libraries ppx_deriving ppx_inline_test)
+   (libraries ppx_deriving ppx_sexp_conv ppx_inline_test core)
    (preprocess
       (pps
+         ppx_sexp_conv
          ppx_deriving.show
          ppx_deriving.eq
          ppx_deriving.ord

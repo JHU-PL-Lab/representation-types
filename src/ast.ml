@@ -162,8 +162,12 @@ and pp_expr' fmt =
 type 'env avalue =
   | AInt  of [ `N | `Z | `P ]
   | ABool of [ `T | `F ]
-  | ARec  of (('env * ident) ID_Map.t [@polyprinter pp_id_map])
   | AFun  of 'env * ident * expr
+  | ARec  of {
+    fields_id: ident ID_Map.t [@polyprinter pp_id_map]; (** The name of the value assigned to each field *)
+    fields_pp: ident ID_Map.t [@polyprinter pp_id_map]; (** The program point at which each field originated. *)
+    pp_envs:   'env  ID_Map.t [@polyprinter pp_id_map]; (** The context associated with each program point *)
+  }
   [@@deriving show { with_path = false }, eq, ord]
 
 
@@ -288,7 +292,7 @@ struct
     for each record so that lookups will return the appropriate
     value within the record.
   *)
-  let rec to_avalue (rv : rvalue) : _ avalue Wrapper.t =
+  (* let rec to_avalue (rv : rvalue) : _ avalue Wrapper.t =
     rv |> Wrapper.map @@
     function
     | RInt i ->
@@ -311,7 +315,7 @@ struct
           |> ID_Map.mapi (fun id _ ->
               (aenv, id))
         in
-        ARec arecord
+        ARec arecord *)
 
 end
 

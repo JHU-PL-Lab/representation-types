@@ -2,7 +2,7 @@
 (executable
    (name lti)
    (modules lti)
-   (libraries layout)
+   (libraries layout stdio)
    (modes native))
 
 
