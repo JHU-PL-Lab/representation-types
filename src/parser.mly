@@ -32,7 +32,7 @@
 %token OP_PLUS OP_MINUS OP_APPEND UNIV_PAT
 
 %token KW_MATCH KW_WITH KW_FUN KW_AND KW_OR KW_NOT
-%token KW_LET KW_IN KW_END KW_INT
+%token KW_LET KW_IN KW_END KW_INT KW_INPUT
 %token ALTERNATIVE ARROW
 
 %start <Ast.expr> main
@@ -170,6 +170,7 @@ let expr5 :=
     in BProj (i1, field)
   }
   | LPAREN; ~ = expr; RPAREN; <>
+  | KW_INPUT;      { pure BInput }
   | lit = literal; { let+ lit = lit in BVal lit }
   | id = ident;    { let+ id =  id  in BVar id }
 

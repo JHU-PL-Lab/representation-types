@@ -1,20 +1,17 @@
 
 open Layout
-
+open Eval
 
 let () =
   let text = Stdio.In_channel.input_all Stdio.stdin in
   let k = try int_of_string Sys.argv.(1) with _ -> 0 in
   try
     let prog = Tests.parse text in
-    let full = Eval.full_analysis_of ~k prog in 
+    let full = full_analysis_of ~k prog in 
     full.results
-      |> List.map Eval.FlowTracking.Wrapper.extract
-      |> List.sort_uniq compare 
-      |> List.iter (Format.printf "%a@." (Util_pp.pp_avalue Util_pp.pp_context));
-    Format.printf "---------------\n";
-    full.log
-      |> List.iter (Format.printf "%s\n");
+      |> FlowTracking.Avalue_Set.to_seq
+      |> Seq.map FlowTracking.Wrapper.extract
+      |> Seq.iter (Format.printf "%a@." (Util_pp.pp_avalue Util_pp.pp_context));
   with
     | Eval.FlowTracking.Open_Expression ->
         Format.eprintf "error: Open Expression."

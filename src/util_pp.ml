@@ -22,6 +22,12 @@ let pp_rvalue_spec  = Ast.pp_rvalue_spec
 let pp_avalue       = Ast.pp_avalue
 (* let pp_avalue_spec  = Ast.pp_avalue_spec *)
 
+let pp_flow_tag     = Eval.FlowTracking.pp_flow_tag
+let pp_aset         = Eval.FlowTracking.pp_aset
+let pp_context_map pp_val =
+  let open Util.Map_Pretty(Eval.FlowTracking.Context_Map) in
+  pp_map pp_context pp_val
+
 let pp_id_set       = Util.pp_id_set
 let pp_int_set      = Util.pp_int_set
 let pp_type_set     = Util.pp_type_set

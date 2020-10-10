@@ -54,10 +54,15 @@ val pp_rvalue_spec : ('a, 'a Ast.rvalue_spec) formatter1
 val pp_avalue : ('a, 'a Ast.avalue) formatter1
   [@@ocaml.toplevel_printer]
 
-(* 
-val pp_avalue_spec : ('a, 'a Ast.avalue_spec) formatter1
+
+val pp_flow_tag : Eval.FlowTracking.flow_tag formatter
   [@@ocaml.toplevel_printer]
-*)
+
+val pp_aset : Eval.FlowTracking.aset formatter
+  [@@ocaml.toplevel_printer]
+
+val pp_context_map : ('a, 'a Eval.FlowTracking.Context_Map.t) formatter1
+  [@@ocaml.toplevel_printer]
 
 
 val pp_id_set : Util.ID_Set.t formatter

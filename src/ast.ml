@@ -70,6 +70,7 @@ and body =
   | BOpr    of operator       (** Primitive Operator. *)
   | BApply  of ident * ident  (** Function Application. *)
   | BProj   of ident * label  (** Field Projection. *)
+  | BInput                    (** Integer input. *)
   | BMatch  of ident * (simple_type * expr) list (** Match Expression. *)
   [@@deriving show { with_path = false }, eq, ord]
 
@@ -130,6 +131,7 @@ and pp_body' fmt =
   | BOpr o          -> pp_operator fmt o
   | BApply (i1, i2) -> Format.fprintf fmt "%s %s" i1 i2
   | BProj (id, lbl) -> Format.fprintf fmt "%s.%s" id lbl
+  | BInput          -> Format.fprintf fmt "input"
   | BMatch (id, branches) ->
       Format.fprintf fmt "@[<v>match %s with" id;
       branches |> List.iter (fun (ty, expr) ->

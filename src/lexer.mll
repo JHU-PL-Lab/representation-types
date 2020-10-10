@@ -57,6 +57,7 @@ rule read =
       | "or"    -> KW_OR
       | "true"  -> KW_TRUE
       | "with"  -> KW_WITH
+      | "input" -> KW_INPUT
       | other   -> IDENTIFIER(other)
     }
   | _ { raise Error }

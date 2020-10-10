@@ -155,7 +155,7 @@ module FlowTracking = struct
   type flow_tag =
     | Original            (** Indicating values which have no program point source. *)
     | Source of Ast.ident (** Indicating values which have the source associated. *)
-    [@@deriving eq, ord]
+    [@@deriving show { with_path = false }, eq, ord]
 
   (**
     RValues paired with a {{!flow_tag} flow_tag}
@@ -164,8 +164,8 @@ module FlowTracking = struct
     type t = flow_tag 
   end)
 
-  type avalue_spec = context Ast.avalue [@@deriving eq, ord]
-  type avalue      = flow_tag * avalue_spec [@@deriving eq, ord]
+  type avalue_spec = context Ast.avalue [@@deriving eq, ord, show]
+  type avalue      = flow_tag * avalue_spec [@@deriving eq, ord, show]
 
   (**
     A mapping from the call context
@@ -191,6 +191,10 @@ module FlowTracking = struct
     type t = avalue [@@deriving ord]
   end)
 
+  let pp_aset =
+    let open Set_Pretty(Avalue_Set) in
+    pp_set pp_avalue
+
   (** Convenience alias *)
   type aset = Avalue_Set.t
 
@@ -210,6 +214,8 @@ module FlowTracking = struct
       (* abstract cache state *)
       env_cache    : aset ID_Map.t Context_Map.t; (** Map from context to abstract environment *)
       env_version  : int Context_Map.t; (** Map from context to monotonically increasing integer, for cache invalidation *)
+      
+      pp_cache     : aset ID_Map.t;     (** Map from (memoized) program points to their last result set *)
       pp_version   : int ID_Map.t;      (** Map from (memoized) program points to the last used env version *)
 
       context      : context; (** Holds the current execution context (callsite program point stack)  *)
@@ -228,11 +234,20 @@ module FlowTracking = struct
       inlining     : int;   (** Akin to `k`, but preserves first `n` levels of context *)
     }
 
+  (**
+    The main state monad (+ reader/writer for immutable input and logging).
+  *)
   module AState = RWS_Util
     (struct type t = interp_parameters end)
     (UnitM)
     (struct type t = interp_state end)
-  
+
+  (**
+    The type of log results accumulated during execution of the
+    abstract interpreter.
+  *)
+  type log_t = unit
+
   open AState.Syntax
 
   module Lists = struct
@@ -341,9 +356,10 @@ module FlowTracking = struct
   let project_field lbl (av: avalue) : aset AState.t =
     match Wrapper.extract av with
     | ARec arec ->
+        let field_id  = ID_Map.find lbl arec.fields_id in
         let field_pp  = ID_Map.find lbl arec.fields_pp in
         let field_ctx = ID_Map.find field_pp arec.pp_envs in
-        lookup field_ctx lbl
+        lookup field_ctx field_id
     | _ ->
       raise Type_Mismatch
 
@@ -366,9 +382,9 @@ module FlowTracking = struct
       | ARec arec ->
           let* { field_depths; _ } = AState.ask in
           let+ record = arec.fields_pp
-            |> ID_Map.mapi (fun lbl _ ->
-              let depth' = ID_Map.find lbl field_depths in
-              let* av' = project_field lbl av in
+            |> ID_Map.mapi (fun field _ ->
+              let depth' = ID_Map.find field field_depths in
+              let* av' = project_field field av in
               let+ type_set = type_of ~depth:(min depth' (depth - 1)) av' in
               type_set
                 |> Type_Set.to_seq
@@ -471,17 +487,37 @@ module FlowTracking = struct
     let* { context; _ } = AState.get in
     add_to_env context id aset
 
+
+  let add_all_to_env ctx ctx' : unit AState.t =
+    let* { env_cache; _ } = AState.get in
+    let env = Context_Map.find_opt ctx env_cache
+      |> Option.value ~default:ID_Map.empty
+    in
+    let* _ = env 
+      |> ID_Map.mapi (add_to_env ctx') 
+      |> ID_Map.sequence 
+    in
+    AState.pure ()
+
+
   let call_closure ctx pp id aset (ma : aset AState.t) : aset AState.t =
     let* ctx' = prune_context (pp :: ctx) in
+    
+    (*
+      Merge current environment into new one,
+      allowing closure semantics to work.
+    *)
+    let* () = add_all_to_env ctx ctx' in
+
     let* () = add_to_env ctx' id aset in
-    let* { env_version; pp_version; _ } = AState.get in
+    let* { env_version; pp_version; pp_cache; _ } = AState.get in
     let env_v = Context_Map.find ctx' env_version in
     match ID_Map.find_opt pp pp_version with
     | Some(pp_v) when pp_v = env_v ->
-        AState.pure Avalue_Set.empty (* memoize this call to prune it away *) 
+        AState.pure (Option.value ~default:Avalue_Set.empty @@ ID_Map.find_opt pp pp_cache) (* memoize this call *) 
     | _ ->
         let* () = register_flow id aset in
-        ma |> AState.control
+        let* a = ma |> AState.control
           (fun s    -> { s with 
               context    = ctx';
               pp_version = ID_Map.add pp env_v pp_version; 
@@ -489,6 +525,15 @@ module FlowTracking = struct
           (fun s s' -> { s' with 
               context = s.context;
           })
+        in
+        let+ () = AState.modify (fun s -> { s with
+          pp_cache = s.pp_cache |> ID_Map.update pp
+            (function
+            | None    -> Some a
+            | Some a' -> Some (Avalue_Set.union a a')
+            );
+        })
+        in a
 
   let call_closure' pp id aset ma =
     let* { context; _ } = AState.get in
@@ -667,17 +712,19 @@ module FlowTracking = struct
     This sets up the initial state as required
     (Including calling {!Matching.find_required_depths}).
   *)
-  let eval ?(k=0) expr =
+  let eval ?(k=0) field_depths expr =
     eval_f expr {
       sensitivity  = k;
       inlining = 0;
-      field_depths = Matching.find_required_depths expr;
+      field_depths;
     } {
       data_flow = ID_Map.empty;
       type_flow = ID_Map.empty;
       
       env_cache   = Context_Map.empty;
       env_version = Context_Map.empty;
+
+      pp_cache    = ID_Map.empty;
       pp_version  = ID_Map.empty;
 
       context = [];
@@ -713,8 +760,7 @@ module Typing = struct
     - from type IDs ({!int}s) to union types ({!Util.Type_Set.t}),
     - from program points to type IDs.
   *)
-  let assign_unique_type_ids
-    (type_flow : Type_Set.t ID_Map.t) =
+  let assign_unique_type_ids (type_flow : Type_Set.t ID_Map.t) =
     let initial = {
       next_tid = 1;
       next_uid = 1;
@@ -829,7 +875,7 @@ module Tagging = struct
     is used for convenience to form a very general fold over
     the AST to find all match and record usages.
   *)
-  type tag_state =
+  type tag_tables =
     {
       match_tables : int Type_Tag_Map.t ID_Map.t;
       (**
@@ -862,7 +908,7 @@ module Tagging = struct
   module State = RWS_Util
     (struct type t = Typing.inferred_types_t end)
     (UnitM)
-    (struct type t = tag_state end)
+    (struct type t = tag_tables end)
 
   open State.Syntax
   
@@ -1110,34 +1156,30 @@ end
 *)
 type full_analysis =
   {
-    flow           : FlowTracking.interp_state;   (** Data dependencies. *)
-    results        : FlowTracking.avalue list;    (** Abstract Interpreter Output. *)
-    log            : string list;                 (** Debug log. *)
-    inferred_types : Typing.inferred_types_t;     (** Inferred types. *)
-    match_tables   : int Type_Tag_Map.t ID_Map.t; (** Match lookup tables. *)
-    record_tables  : type_tag Field_Tags_Map.t ID_Map.t; (** Record lookup tables. *)
-    append_tables  : type_tag Type_Tag_Pair_Map.t ID_Map.t; (** Record append tables. *)
+    flow           : FlowTracking.interp_state; (** Data dependencies. *)
+    results        : FlowTracking.aset;         (** Abstract Interpreter Output. *)
+    log            : FlowTracking.log_t;        (** Debug log. *)
+    field_depths   : Matching.field_depth_t;    (** Required depth for each record field *)
+    inferred_types : Typing.inferred_types_t;   (** Inferred types. *)
+    tag_tables     : Tagging.tag_tables;        (** Lookup tables for computing type tags fast *)
   }
 
 (**
   Run each phase of analysis on the provided test case,
   returning the collection of results.
 *)
-let full_analysis_of ?(k=0) test_case =
-  let (flow, log, results, _) = FlowTracking.eval ~k test_case in
-  let inferred_types = Typing.assign_program_point_types
-      flow.data_flow flow.type_flow
-  in
-  let Tagging.{ record_tables; match_tables; append_tables; } =
-    Tagging.compute_tag_tables inferred_types test_case in
+let full_analysis_of ?(k=0) expr =
+  let field_depths = Matching.find_required_depths expr in
+  let (flow, log, results) = FlowTracking.eval ~k field_depths expr in
+  let inferred_types = Typing.assign_program_point_types flow.data_flow flow.type_flow in
+  let tag_tables = Tagging.compute_tag_tables inferred_types expr in
   {
     flow;
     log;
     results;
+    field_depths;
     inferred_types;
-    match_tables;
-    record_tables;
-    append_tables;
+    tag_tables;
   }
   
 
@@ -1239,7 +1281,7 @@ module TaggedEvaluator = struct
     | RBool false    -> State.pure TFalse
     | RFun (_, _, _) -> State.pure TFun
     | RRec record ->
-        let* { field_depths; _ } = State.asks (fun s -> s.flow) in
+        let* { field_depths; _ } = State.ask in
         let+ record' = record
           |> ID_Map.bindings
           |> traverse (fun (lbl, rv') -> 
@@ -1335,7 +1377,7 @@ module TaggedEvaluator = struct
       in
       let record' = record' |> List.to_seq |> ID_Map.of_seq in
       let field_tags = ID_Map.map fst record' in
-      let+ { record_tables; _ } = State.ask in
+      let+ { record_tables; _ } = State.asks (fun s -> s.tag_tables) in
       let tag = record_tables
         |> ID_Map.find pp
         |> Field_Tags_Map.find field_tags
@@ -1398,7 +1440,7 @@ module TaggedEvaluator = struct
     | OAppend (i1, i2) ->
       let$* (t1, RRec r1) = lookup i1 in
       let$* (t2, RRec r2) = lookup i2 in
-      let+ { append_tables; _ } = State.ask in
+      let+ { append_tables; _ } = State.asks (fun s -> s.tag_tables) in
       let tag = append_tables
         |> ID_Map.find pp
         |> Type_Tag_Pair_Map.find (t1, t2)
@@ -1433,7 +1475,7 @@ module TaggedEvaluator = struct
     can retrieve the necessary match table entry.
   *)
   and eval_match pp id branches =
-    let$* { match_tables; _ } = State.ask in
+    let$* { match_tables; _ } = State.asks (fun s -> s.tag_tables) in
     let* (tag, _) as rv = lookup id in
     let* typ = type_of rv in
     let tag_branch = match_tables
