@@ -1,5 +1,6 @@
 
 open Layout
+open Analysis
 open Eval
 
 let () =
@@ -12,17 +13,22 @@ let () =
       |> FlowTracking.Avalue_Set.to_seq
       |> Seq.map FlowTracking.Wrapper.extract
       |> Seq.iter (Format.printf "%a@." (Util_pp.pp_avalue Util_pp.pp_context));
+    Format.printf "---------------\n";
+    let (_, actual) = TaggedEvaluator.eval prog
+        (random_input ~upper_bound:10000) full in
+    Format.printf "%a@." Util_pp.pp_rvalue' actual
   with
-    | Eval.FlowTracking.Open_Expression ->
-        Format.eprintf "error: Open Expression."
-    | Eval.FlowTracking.Type_Mismatch ->
-        Format.eprintf "error: Type Mismatch."
-    | Eval.FlowTracking.Match_Fallthrough ->
-        Format.eprintf "error: Match Fallthrough."
-    | Eval.FlowTracking.Empty_Expression ->
-        Format.eprintf "error: Empty Expression (!?)."
+    | Analysis.Open_Expression   
+    | Eval.Open_Expression ->
+        Format.eprintf "error: Open Expression.\n"
+    | Analysis.Type_Mismatch     
+    | Eval.Type_Mismatch ->
+        Format.eprintf "error: Type Mismatch.\n"
+    | Analysis.Match_Fallthrough 
+    | Eval.Match_Fallthrough ->
+        Format.eprintf "error: Match Fallthrough.\n"
     | Parser.Error ->
-        Format.eprintf "error: Parse Error."
+        Format.eprintf "error: Parse Error.\n"
     | Lexer.Error ->
-        Format.eprintf "error: Lexing Error."
+        Format.eprintf "error: Lexing Error.\n"
 

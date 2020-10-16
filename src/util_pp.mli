@@ -55,13 +55,16 @@ val pp_avalue : ('a, 'a Ast.avalue) formatter1
   [@@ocaml.toplevel_printer]
 
 
-val pp_flow_tag : Eval.FlowTracking.flow_tag formatter
+val pp_variable_kind : Analysis.Closures.variable_kind formatter
   [@@ocaml.toplevel_printer]
 
-val pp_aset : Eval.FlowTracking.aset formatter
+val pp_flow_tag : Analysis.FlowTracking.flow_tag formatter
   [@@ocaml.toplevel_printer]
 
-val pp_context_map : ('a, 'a Eval.FlowTracking.Context_Map.t) formatter1
+val pp_aset : Analysis.FlowTracking.aset formatter
+  [@@ocaml.toplevel_printer]
+
+val pp_context_map : ('a, 'a Analysis.FlowTracking.Context_Map.t) formatter1
   [@@ocaml.toplevel_printer]
 
 

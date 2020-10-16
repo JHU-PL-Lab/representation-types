@@ -12,7 +12,7 @@
         (ocamlopt_flags 
             (:standard 
              -O3 -afl-instrument
-             -cc afl-gcc )))
+             -cc afl-clang )))
     (release
         (flags (:standard))
         (ocamlopt_flags (:standard -O3))))

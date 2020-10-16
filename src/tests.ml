@@ -6,6 +6,8 @@
   the tagged interpreter on the values of expressions.
 *)
 
+open Analysis
+open Eval
 open Types
 open Ast
 
@@ -16,11 +18,10 @@ let parse s =
   Parser.main Lexer.read (Lexing.from_string s)
 
 
-let test_eval_tagged expr =
-  let open Eval in
+let test_eval_tagged ?(input = random_input ~upper_bound:10000) expr =
   let analysis = full_analysis_of ~k:0 expr in
-  try ignore (TaggedEvaluator.eval expr analysis); true with
-  | TaggedEvaluator.Interpreters_Out_Of_Step -> false
+  try ignore (TaggedEvaluator.eval expr input analysis); true with
+  | Interpreters_Out_Of_Step -> false
 
   
 

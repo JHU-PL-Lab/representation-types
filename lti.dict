@@ -15,6 +15,7 @@ kw_or="or"
 kw_true="true"
 kw_with="with"
 kw_arrow="->"
+kw_input="input"
 kw_univ="*"
 
 misc_empty="{}"

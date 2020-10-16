@@ -3,10 +3,11 @@
    (public_name layout)
    (inline_tests (flags -verbose))
    (modules
+      analysis
       ast
       classes
+      compiler
       eval
-      lens
       lexer
       parser
       parser_util
@@ -14,10 +15,9 @@
       types
       util
       util_pp)
-   (libraries ppx_deriving ppx_sexp_conv ppx_inline_test core)
+   (libraries ppx_deriving ppx_inline_test)
    (preprocess
       (pps
-         ppx_sexp_conv
          ppx_deriving.show
          ppx_deriving.eq
          ppx_deriving.ord

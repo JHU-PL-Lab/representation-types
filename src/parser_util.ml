@@ -37,7 +37,12 @@ include struct
     fun ps ->
       let ct = Option.value ~default:0 @@
         ID_Map.find_opt id ps.fresh_cts in
-      let id' = id ^ "$" ^ string_of_int ct in
+      let id' =
+        if String.equal id "" || ct > 0 then
+          id ^ "$" ^ string_of_int ct 
+        else
+          id
+      in
       let ps' = { ps with
         fresh_cts = ps.fresh_cts |> ID_Map.add id (ct + 1);
       }
