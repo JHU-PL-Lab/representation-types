@@ -8,25 +8,24 @@ let () =
   let k = try int_of_string Sys.argv.(1) with _ -> 0 in
   try
     let prog = Tests.parse text in
-    let full = full_analysis_of ~k prog in 
-    full.results
-      |> FlowTracking.Avalue_Set.to_seq
-      |> Seq.map FlowTracking.Wrapper.extract
-      |> Seq.iter (Format.printf "%a@." (Util_pp.pp_avalue Util_pp.pp_context));
-    Format.printf "---------------\n";
-    let (_, actual) = TaggedEvaluator.eval prog
-        (random_input ~upper_bound:10000) full in
-    Format.printf "%a@." Util_pp.pp_rvalue' actual
+    let analysis = full_analysis_of ~k prog in 
+    print_string @@ Compiler.C.compile_string ~analysis prog  
   with
+    | Compiler.Open_Expression
     | Analysis.Open_Expression   
     | Eval.Open_Expression ->
         Format.eprintf "error: Open Expression.\n"
+    
+    | Compiler.Type_Mismatch
     | Analysis.Type_Mismatch     
     | Eval.Type_Mismatch ->
         Format.eprintf "error: Type Mismatch.\n"
+
+    | Compiler.Match_Fallthrough
     | Analysis.Match_Fallthrough 
     | Eval.Match_Fallthrough ->
         Format.eprintf "error: Match Fallthrough.\n"
+    
     | Parser.Error ->
         Format.eprintf "error: Parse Error.\n"
     | Lexer.Error ->

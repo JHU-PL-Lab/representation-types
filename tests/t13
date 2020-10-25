@@ -1,0 +1,13 @@
+let defaults = { f1 = false; f2 = true } in
+let to_num = fun r ->
+  match defaults @ r with
+  | { f1 : false; f2 : false } -> 0
+  | { f1 : false; f2 : true  } -> 1
+  | { f1 : true;  f2 : false } -> 2
+  | { f1 : true;  f2 : true  } -> 3
+  end
+in
+  to_num {}
++ to_num { f1 = true }
++ to_num { f1 = false; f2 = false }
++ to_num { f3 = 30 }

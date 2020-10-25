@@ -181,6 +181,7 @@ module Closures = struct
     {
       scope: scope;
       return: ident;
+      argument: ident option;
     }
 
   type closure_info_map = closure_info ID_Map.t
@@ -263,9 +264,18 @@ module Closures = struct
           })
           (fun s s' -> { s' with 
             curr_pp = s.curr_pp;
-            info = s'.info
-              |> ID_Map.add pp { scope = s'.curr_scope; return = s'.curr_pp };
-              
+            info = begin
+              let new_info = { 
+                scope    = s'.curr_scope; 
+                return   = s'.curr_pp;
+                argument = Some(id);
+              }
+              in
+              s'.info
+                |> ID_Map.add pp new_info
+                |> ID_Map.add id new_info 
+            end;
+
             curr_scope =
               ID_Map.merge
                 (fun _ k1 k2 -> match k1, k2 with
@@ -290,8 +300,11 @@ module Closures = struct
       curr_pp    = "";
       info       = ID_Map.empty;
     } in
-    s.info 
-      |> ID_Map.add "__main" { scope = s.curr_scope; return = s.curr_pp }
+    s.info |> ID_Map.add "__main" { 
+      scope    = s.curr_scope; 
+      return   = s.curr_pp;
+      argument = None;
+    }
 
 end
 
@@ -537,9 +550,9 @@ module FlowTracking = struct
     let avalue_seq = Avalue_Set.to_seq av in
     let+ type_seq = avalue_seq |> Seqs.traverse (fun av ->
       match Wrapper.extract av with
-      | AInt _         -> pure_single TInt
       | ABool `T       -> pure_single TTrue
       | ABool `F       -> pure_single TFalse
+      | AInt _         -> pure_single TInt
       | AFun (_, _, _) -> pure_single TFun
       | ARec arec ->
           let* { field_depths; _ } = AState.ask in
@@ -560,12 +573,12 @@ module FlowTracking = struct
             |> ID_Map.sequence
           in
           let open! ID_Map.Make_Traversable(Lists) in
-          record
+          (record
             |> sequence (* gets cartesian product of each field's possible types *)
             |> List.map (fun id_map ->
               canonicalize_simple @@  
                 TRec (ID_Map.bindings id_map))
-            |> Type_Set.of_list
+            |> Type_Set.of_list)
     ) in
     Seq.fold_left
       Type_Set.union
@@ -926,13 +939,25 @@ module Typing = struct
   *)
   let assign_unique_type_ids (type_flow : Type_Set.t ID_Map.t) =
     let initial = {
-      next_tid = 1;
+      next_tid = 4;
       next_uid = 1;
 
-      type_to_id  = Type_Map.singleton    TUniv         0;
+      type_to_id  = Type_Map.of_seq (List.to_seq [
+        (TUniv,  0);
+        (TInt,   1);
+        (TTrue,  2);
+        (TFalse, 3);
+      ]);
+      
+      id_to_type  = Int_Map.of_seq (List.to_seq [
+        (0, TUniv);
+        (1, TInt);
+        (2, TTrue);
+        (3, TFalse);
+      ]);
+
       union_to_id = Int_Set_Map.singleton Int_Set.empty 0;
 
-      id_to_type  = Int_Map.singleton 0 TUniv;
       id_to_union = Int_Map.singleton 0 Int_Set.empty;
 
     } in

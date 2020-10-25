@@ -686,6 +686,8 @@ module Traversable_Util (T : Traversable) = struct
   module Make_Traversable (A : Applicative) = struct
     include T.Make_Traversable(A)
     let sequence ts = traverse (fun x -> x) ts
+    let traverse_ f ts = A.map (fun _ -> ()) (traverse f ts)
+    let sequence_ ts = traverse_ (fun x -> x) ts
   end
 
   let map_accuml : type a b c. (a -> b -> (a * c)) -> a -> b T.t -> (a * c T.t) =

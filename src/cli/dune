@@ -5,6 +5,12 @@
    (libraries layout stdio)
    (modes native))
 
+(executable
+   (name lcc)
+   (modules lcc)
+   (libraries layout stdio)
+   (modes native))
+
 
 (env
     (dev

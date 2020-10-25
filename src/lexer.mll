@@ -10,7 +10,7 @@
 let digit = ['0'-'9']
 let int = ('+' | '-')? digit+
 
-let space = [' ' '\t' '\n']+
+let space = [' ' '\t' '\r' '\n']+
 
 let letter = ['a'-'z' 'A'-'Z']
 

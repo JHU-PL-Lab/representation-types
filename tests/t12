@@ -1,0 +1,17 @@
+let r1 = {
+  x = fun this -> this.y this + this.z this;
+  y = fun this -> this.z this + this.z this;
+  z = fun this -> 10
+} in
+
+let r2 = fun super -> super @ {
+  y = fun this -> super.y this - this.w this;
+  w = fun this -> 1
+} in
+
+let get_x = fun r -> r.x r in
+
+let x1 = get_x r1 in
+let x2 = get_x (r2 r1) in
+let x3 = get_x (r2 (r2 r1)) in
+x1 + x2 + x3

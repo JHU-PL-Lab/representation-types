@@ -1,0 +1,23 @@
+let f = fun x -> x in
+
+(*
+In absence of inlining of f, this
+causes the types of x1..x3 to be
+the same.
+*)
+let x1 = f true in
+let x2 = f false in
+let x3 = f true in
+
+let r = { a = x1; b = x2; c = x3 } in
+
+match r with
+| { a: false; b: false; c: false } -> 0
+| { a: false; b: false; c: true  } -> 1
+| { a: false; b: true;  c: false } -> 2
+| { a: false; b: true;  c: true  } -> 3
+| { a: true;  b: false; c: false } -> 4
+| { a: true;  b: false; c: true  } -> 5
+| { a: true;  b: true;  c: false } -> 6
+| { a: true;  b: true;  c: true  } -> 7
+end

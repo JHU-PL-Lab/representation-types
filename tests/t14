@@ -1,0 +1,24 @@
+let append3 = 
+  fun r1 -> fun r2 -> fun r3 ->
+    r1 @ r2 @ r3
+in
+
+let do_match = fun r ->
+  match r with
+  | { a: *; b: *; c: * } -> 0
+  | { a: *; b: *; d: * } -> 1
+  | { a: *; c: *; d: * } -> 2
+  | { b: *; c: *; d: * } -> 3
+  | * -> 4
+  end
+in
+
+let x1 = { a = 1 } in
+let x2 = { b = 2 } in
+let x3 = { c = 3 } in
+let x4 = { d = 4 } in
+
+do_match (append3 x1 x2 x3) +
+do_match (append3 x1 x2 x4) +
+do_match (append3 x1 x3 x4) +
+do_match (append3 x2 x3 x4)

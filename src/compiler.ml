@@ -8,28 +8,48 @@ open Classes
 open Types
 open Util
 
+type exn +=
+  | Open_Expression
+  | Type_Mismatch
+  | Match_Fallthrough
+  | Empty_Expression
 
 let c_prelude =
 "
+#include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 
-typedef void (*Func)();
+typedef void Func();
 
 typedef struct {
-  Func func;
+  Func *_func;
 } Closure;
 
-typedef void* Univ;
+#define ABORT exit(EXIT_FAILURE)
+#define COPY(...) __builtin_memcpy(__VA_ARGS__)
+#define CALL(c, ...) ((c)->_func)((c), __VA_ARGS__)
+#define INIT_CLOSURE(ptr, type, ...) \
+  do { \
+    ptr = malloc(sizeof(type)); \
+    *(type*)ptr = (type) __VA_ARGS__; \
+  } while(0)
+
+void _input(ssize_t *i);
+static _Noreturn void unreachable();
+
+typedef struct {} Empty;
+typedef void *Univ;
 "
 
 let c_epilogue =
 "
 int main(int argc, char **argv) {
-  /*
-    Eventually, do setup here for `input` calls,
-    and other argument handling if needed.
-  */
   return 0;
+}
+
+void _input(ssize_t *i) {
+  if (scanf(\"%zd\", i) != 1) ABORT;
 }
 "
 
@@ -39,7 +59,8 @@ module C = struct
 
   type compile_state =
     {
-      deferred: string Diff_list.t list
+      deferred: string Diff_list.t Diff_list.t;
+      counter: int;
     }
 
   type compile_params =
@@ -76,123 +97,613 @@ module C = struct
     include Make_Traversable(State)
   end
 
-  let emit1 s = 
-    State.tell Diff_list.(cons s nil)
-
   let emit ss =
     State.tell (Diff_list.from_list ss)
+    
+  let tmp_prefix = "_tmp$"
+  
+  let fresh_tmp_id =
+    let* { counter; _ } = State.get in
+    let+ () = State.modify (fun s -> { s with counter = counter + 1; }) in
+    tmp_prefix ^ (string_of_int counter)
 
+  let indent_prefix = "  "
+  let indent ma =
+    State.pass (Diff_list.map (fun s -> indent_prefix ^ s)) ma
+    
+  let bracketed_indented e1 e2 ma =
+    emit e1 *> indent ma <* emit e2
+
+  let defer ma =
+    let* (_, emitted) = State.capture ma in
+    State.modify (fun s -> { s with deferred = Diff_list.(snoc s.deferred emitted) })
+
+  let emit_deferred =
+    let* { deferred; _ } = State.get in
+    Lists.traverse_ State.tell (Diff_list.to_list deferred) *>
+    State.modify (fun s -> { s with deferred = Diff_list.nil })
+    
   let sf = Format.asprintf
   let ff = Format.fprintf
 
-  let emit_prelude = emit1 c_prelude
-  let emit_epilogue = emit1 c_epilogue
+  let emit_prelude = emit [c_prelude]
+  let emit_epilogue = emit [c_epilogue]
 
   let type_prefix  = "Type"
   let union_prefix = "Union"
 
-  let rec type_repr ?(boxed_records=false) =
+  let fmt_type fmt id =
+    ff fmt "%s%d" type_prefix id
+  let fmt_union fmt id =
+    ff fmt "%s%d" union_prefix id
+  let fmt_closure_type fmt name =
+    ff fmt "%s_Closure" name
+  let fmt_closure_impl fmt name =
+    ff fmt "_%s" name
+
+  let place_deref =
     function
-    | TInt  -> "int64_t"
+    | `Ptr id | `Loc id -> `Loc (sf "(*%s)" id)
+
+  let place_address =
+    function
+    | `Ptr id | `Loc id -> `Ptr (sf "(&%s)" id)
+
+  let place_to_ptr =
+    function
+    | `Ptr id -> `Ptr id
+    | loc -> place_address loc
+
+  let place_to_loc =
+    function
+    | `Loc id -> `Loc id 
+    | ptr -> place_deref ptr 
+
+  let place_to_str =
+    function
+    | `Ptr id | `Loc id -> id
+
+  let place_field lbl =
+    function
+    | `Ptr id -> `Loc (sf "%s->%s" id lbl)
+    | `Loc id -> `Loc (sf "%s.%s" id lbl)
+
+  let place_type tid =
+    place_field (sf "%a" fmt_type tid)
+
+  let get_place (info : Analysis.Closures.closure_info) id =
+    match ID_Map.find id info.scope with
+    | exception _ -> raise Open_Expression
+    | Captured -> `Loc (sf "clo->%s" id)
+    | _        -> `Loc id
+
+    
+  let fmt_place_ptr fmt place =
+    Format.pp_print_string fmt (
+      place |> place_to_ptr
+            |> place_to_str)
+    
+  let fmt_place_loc fmt place =
+    Format.pp_print_string fmt (
+      place |> place_to_loc
+            |> place_to_str)
+
+
+  let get_closure_info name =
+    let+ { closures; _ } = State.ask in
+    ID_Map.find name closures
+
+
+  let uid_of name =
+    let+ { inferred_types; _ } = State.ask in
+    ID_Map.find name inferred_types.pp_to_union_id
+
+  let union_of name =
+    let+ { inferred_types; _ } = State.ask in
+    let uid = ID_Map.find name inferred_types.pp_to_union_id in
+    let union = Int_Map.find uid inferred_types.id_to_union in
+    (union, uid)
+
+  let tid_of simple_type =
+    let+ { inferred_types; _ } = State.ask in
+    Type_Map.find simple_type inferred_types.type_to_id
+
+  let type_of_tid id =
+    let+ { inferred_types; _ } = State.ask in
+    Int_Map.find id inferred_types.id_to_type
+  
+  
+  let rec size_of_type_repr =
+    function
+    | TTrue | TFalse -> 0
+    | TInt | TFun | TUniv -> 8
+    | TRec fields ->
+        List.fold_left
+          (fun acc (_, ty) ->
+              acc + max (size_of_type_repr ty) 8) 
+          0 
+          fields
+
+  let size_of_union u =
+    match Int_Set.elements u with
+    | []  -> State.pure 0
+    | [x] -> size_of_type_repr <$> type_of_tid x
+    | xs  ->
+      let+ xsizes = xs |>
+        Lists.traverse (fun tid ->
+          size_of_type_repr <$> type_of_tid tid)
+      in
+      8 + List.fold_left max 0 xsizes
+
+
+
+  let rec type_repr =
+    function
+    | TInt  -> "ssize_t"
     | TUniv -> "Univ"
     | TFun  -> "Closure*"
-    | TTrue | TFalse -> "struct {}"
-    | TRec _ when boxed_records -> "Univ"
+    | TTrue | TFalse -> "Empty"
     | TRec ts ->
-        ts |> sf "struct {@.%a}"
-          (fun fmt ts ->  
-            ts |> List.iter (fun (lbl, ty) ->
-              let sty = type_repr ~boxed_records:true ty in
-              ff fmt "  %s %s;@." sty lbl
+        ts |> sf "struct {@.%a} "
+          (fun fmt ts -> ts |> List.iter (fun (lbl, t) ->
+            ff fmt "  Univ %s; /* %a */@." lbl pp_simple_type t
           ))
 
   let emit_type_decls =
     let* { inferred_types; _ } = State.ask in
     inferred_types.id_to_type
       |> Int_Map.bindings
-      |> Lists.traverse (fun (id, ty) ->
+      |> Lists.traverse_ (fun (id, ty) ->
         let sty = type_repr ty in
-        emit1 (sf "typedef %s %s%d;" sty type_prefix id)
-        *> emit1 "" 
-        *> State.pure (Some id)
+        emit [sf "typedef %s %a;\n" sty fmt_type id] *> 
+        State.pure (Some id)
       )
 
   let emit_union_decls =
     let* { inferred_types; _ } = State.ask in
-    inferred_types.id_to_union
-      |> Int_Map.bindings
-      |> Lists.traverse (fun (id, tys) ->
-        if Int_Set.cardinal tys == 0 then
-          emit1 (sf "typedef Univ %s%d" union_prefix id)
-        else if Int_Set.cardinal tys == 1 then
-          let ty = Int_Set.choose tys in
-          emit1 (sf "typedef %s%d %s%d;" type_prefix ty union_prefix id)
-        else
-        let* () = emit [
-          "typedef struct {"; 
-          "  enum {"
-        ] in
-        let* _ = tys 
+    let id_to_union = Int_Map.bindings inferred_types.id_to_union in
+    id_to_union
+    |> Lists.traverse_ (fun (id, tys) ->
+      if Int_Set.cardinal tys = 0 then
+        emit [sf "typedef Univ %a;\n" fmt_union id]
+      else if Int_Set.cardinal tys = 1 then
+        let tid = Int_Set.choose tys in
+        emit [sf "typedef struct { %a %a; } %a;" fmt_type tid fmt_type tid fmt_union id]
+      else 
+      bracketed_indented
+        ["typedef struct {"] [sf "} %s%d;\n" union_prefix id]
+      begin
+        bracketed_indented ["enum {"] ["} tag;"]
+        begin
+          tys 
           |> Int_Set.elements
-          |> Lists.traverse (fun tid ->
-            emit1 (sf "    %s%d_%s%d," union_prefix id type_prefix tid)  
-          ) 
-        in
-        let* () = emit [
-          "  } tag;";
-          "  union {"; 
-        ] in
-        let* _ = tys
-          |> Int_Set.elements
-          |> Lists.traverse (fun tid ->
-            emit1 (sf "    %s%d %s%d;" type_prefix tid type_prefix tid)  
+          |> Lists.traverse_ (fun tid ->
+            emit [sf "%a_%a," fmt_union id fmt_type tid]
           )
-        in emit [
-          "  };";
-          sf "} %s%d;" union_prefix id;
-          "";
-        ]
-      )
+        end *>
+        bracketed_indented ["union {"] ["};"]
+        begin
+          tys
+          |> Int_Set.elements
+          |> Lists.traverse_ (fun tid ->
+            emit [sf "%a %a;" fmt_type tid fmt_type tid]
+          )
+        end
+      end)
 
   let emit_closure_struct_decls =
-    let* { closures; inferred_types; _ } = State.ask in
-    let+ _ = closures
-      |> ID_Map.mapi (fun name { Analysis.Closures.scope; _ } ->
-        emit1 "typedef struct {" *>
-        emit1 "  Func func;" *>
-        let* _ = scope
-          |> ID_Map.bindings
-          |> List.filter_map (fun (id, kind) ->
-              match kind with
-              | Analysis.Closures.Captured -> Some(id)
-              | _ -> None)
-          |> Lists.traverse (fun id ->
-              let uid = ID_Map.find id inferred_types.pp_to_union_id in
-              emit1 (sf "  %s%d %s;" union_prefix uid id))
-        in
-        emit1 (sf "} %s_closure;" name)
-      )
-      |> ID_Map.sequence
-    in ()
-  
+    let* { closures; _ } = State.ask in
+    closures
+    |> ID_Map.mapi (fun name { Analysis.Closures.scope; _ } ->
+      bracketed_indented
+        ["typedef struct {"] [sf "} %a;\n" fmt_closure_type name]
+      begin
+        let* () = emit ["Func *_func;"] in
+        scope
+        |> ID_Map.bindings
+        |> List.filter_map (fun (id, kind) ->
+            match kind with
+            | Analysis.Closures.Captured -> Some(id)
+            | _ -> None)
+        |> Lists.traverse (fun id ->
+            let* uid = uid_of id in
+            emit [sf "%a %s;" fmt_union uid id])
+      end)
+    |> ID_Map.sequence_
+    
   let emit_closure_function_decls =
     let* { closures; _ } = State.ask in
-    let+ _ = closures
-      |> ID_Map.mapi (fun name _info ->
-        emit1 @@ sf "Func %s;" name
-      )
+    let* _ = closures
+      |> ID_Map.mapi (fun name _ -> emit [sf "Func %a;" fmt_closure_impl name])
       |> ID_Map.sequence
-    in ()  
+    in
+      emit [""]
+
+  (**
+    Figure out how to set the tag, if necessary.
+  *)
+  let tag_setter tid pp place =
+    let+ u, uid = union_of pp in
+    if not (Int_Set.mem tid u) then
+      None
+    else if Int_Set.cardinal u = 1 then
+      Some (State.pure ())
+    else
+      Some (
+        emit [sf "%a.tag = %a_%a;" fmt_place_loc place fmt_union uid fmt_type tid]
+      )
+
+  let tag_setter_exn tid pp place =
+    let+ set_tag = tag_setter tid pp place in
+    match set_tag with
+    | None -> raise Type_Mismatch
+    | Some(set_tag) -> set_tag
+
+  let assert_place_type pp tid place =
+    let* u, uid = union_of pp in
+    if not (Int_Set.mem tid u) then
+      raise Type_Mismatch
+    else
+    State.pure (place_type tid place) <*
+    if Int_Set.cardinal u != 1 then
+      emit [sf "if (%a.tag != %a_%a) ABORT;" fmt_place_loc place fmt_union uid fmt_type tid]
+    else
+      State.pure()
+    
+  let is_true pp place =
+    let* tru = tid_of TTrue in
+    let+ u, uid = union_of pp in
+    if not (Int_Set.mem tru u) then
+      "0"
+    else if Int_Set.cardinal u = 1 then
+      "1"
+    else
+      sf "(%a.tag == %a_%a)" fmt_place_loc place fmt_union uid fmt_type tru
+
+  let is_false pp place =
+    let* fal = tid_of TFalse in
+    let+ u, uid = union_of pp in
+    if not (Int_Set.mem fal u) then
+      "0"
+    else if Int_Set.cardinal u = 1 then
+      "1"
+    else
+      sf "(%a.tag == %a_%a)" fmt_place_loc place fmt_union uid fmt_type fal
 
 
-  
 
-  let compile _expr : unit State.t =
+  let rec emit_clauses (info : Analysis.Closures.closure_info) dest =
+    function
+    | [] -> raise Empty_Expression
+    | Cl (pp, body) as cl :: [] ->
+        emit [sf "/* %a */" pp_clause' cl] *>
+        emit_body info pp dest body
+    | Cl (pp, body) as cl :: cls ->
+        let* pp_uid = uid_of pp in
+        emit [sf "/* %a */" pp_clause' cl] *>
+        emit [sf "%a %s;" fmt_union pp_uid pp] *>
+        emit_body info pp (`Loc pp) body *>
+        emit [""] *>
+        emit_clauses info dest cls
+
+  and emit_closure_defn name expr : unit State.t =
+    let* info = get_closure_info name in
+    let* return_uid = uid_of info.return in
+    let* func_signature = match info.argument with
+    | None     -> 
+        State.pure [sf "void %a(const %a *clo, %a *restrict %s) {" 
+          fmt_closure_impl name 
+          fmt_closure_type name 
+          fmt_union return_uid 
+          info.return]
+    | Some arg -> 
+        let+ arg_uid = uid_of arg in
+        [sf "void %a(const %a *clo, %a *restrict %s, %a %s) {" 
+          fmt_closure_impl name 
+          fmt_closure_type name 
+          fmt_union return_uid 
+          info.return 
+          fmt_union arg_uid arg]
+    in
+    bracketed_indented func_signature ["}\n\n"]
+      (emit_clauses info (`Ptr info.return) expr)
+
+  and emit_body info pp dest =
+    function
+    | BVar id ->
+        let id = get_place info id in
+        emit [sf "%a = %a;" fmt_place_loc dest fmt_place_loc id]
+    
+    | BVal (VFun (_, expr)) ->
+        let* () = defer @@ emit_closure_defn pp expr in
+        let* fn = tid_of TFun in
+        let* set_tag = tag_setter_exn fn pp dest in
+        let* pp_info = get_closure_info pp in
+        let captured = pp_info.scope 
+          |> ID_Map.bindings
+          |> List.filter_map Analysis.Closures.(fun (lbl, kind) -> 
+              match kind with
+              | Captured -> Some (lbl, get_place info lbl)
+              | _ -> None)
+        in
+        set_tag *>
+        if List.length captured = 0 then
+          emit [sf "static %a %a$ = { ._func = %a };" fmt_closure_type pp fmt_closure_impl pp fmt_closure_impl pp] *>
+          emit [sf "%a = (Closure*)&%a$;" fmt_place_loc (place_type fn dest) fmt_closure_impl pp]
+        else
+        bracketed_indented
+          [sf "INIT_CLOSURE(%a, %a, {" fmt_place_loc (place_type fn dest) fmt_closure_type pp] ["});"]
+        begin
+          let* () = emit [sf "._func = %a," fmt_closure_impl pp] in
+          captured |> Lists.traverse_ (fun (name, src) ->
+            emit [sf ".%s = %a," name fmt_place_loc src])
+        end
+
+    | BVal (VRec fields) ->
+        let* { tag_tables; _ } = State.ask in
+        let record_table = ID_Map.find pp tag_tables.record_tables in
+        let* pp_u, _pp_uid = union_of pp in
+
+        let init_fields place =
+          fields |> Lists.traverse_ (fun (lbl, id) ->
+            let* id_u, id_uid = union_of id in
+            let id_place = get_place info id in
+            let* size = size_of_union id_u in
+            if size <= 8 then
+              emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr (place_field lbl place) fmt_place_ptr id_place fmt_union id_uid]
+            else
+              emit [sf "%a = COPY(malloc(sizeof(%a)), %a, sizeof(%a));" 
+                fmt_place_loc (place_field lbl place) fmt_union id_uid fmt_place_ptr id_place fmt_union id_uid]
+          )
+        in
+        
+        if Int_Set.cardinal pp_u = 1 then
+          init_fields (place_type (Int_Set.choose pp_u) dest)
+        else
+        let open Map_Util(struct type t = type_tag [@@deriving ord] end)(Field_Tags_Map) in
+        let inverted_fields = invert record_table in
+        if Invert_Map.cardinal inverted_fields = 1 then
+          let Tag tid, _ = Invert_Map.choose inverted_fields in
+          let* set_tag = tag_setter_exn tid pp dest in
+          set_tag *> init_fields (place_type tid dest)
+        else
+        let rec emit_switches field_tags = 
+          function
+          | (lbl, id) :: fields ->
+              let* id_u, id_uid = union_of id in
+              let id_place = get_place info id in
+              let type_tags = Int_Set.elements id_u in
+              if Int_Set.cardinal id_u = 1 then
+                let field_tags' = ID_Map.add lbl (Tag (Int_Set.choose id_u)) field_tags in
+                emit_switches field_tags' fields
+              else
+              bracketed_indented
+                [sf "switch (%a.tag) {" fmt_place_loc id_place] ["}"]
+              begin
+                type_tags |> Lists.traverse_ (fun tid ->
+                  let field_tags' = ID_Map.add lbl (Tag tid) field_tags in
+                  emit [sf "case %a_%a:" fmt_union id_uid fmt_type tid] *>
+                  indent (emit_switches field_tags' fields)  
+                )
+              end
+
+          | _ -> 
+          match Field_Tags_Map.find_opt field_tags record_table with
+          | None          -> emit ["ABORT;"]
+          | Some(Tag tid) -> 
+              let* set_tag = tag_setter_exn tid pp dest in
+              set_tag *> init_fields (place_type tid dest)
+        in
+        emit_switches
+          ID_Map.empty
+          fields
+        
+    | BVal (VInt i) ->
+        let* int = tid_of TInt in
+        let* set_tag = tag_setter_exn int pp dest in
+        set_tag *> emit [sf "%a = %d;" fmt_place_loc (place_type int dest) i]
+
+    | BVal VTrue ->
+        let* tru = tid_of TTrue in
+        let* set_tag = tag_setter_exn tru pp dest in
+        set_tag
+
+    | BVal VFalse ->
+        let* fal = tid_of TFalse in
+        let* set_tag = tag_setter_exn fal pp dest in
+        set_tag
+        
+    | BInput ->
+        let* int = tid_of TInt in
+        let* set_tag = tag_setter_exn int pp dest in
+        set_tag *> emit [sf "_input(%a);" fmt_place_ptr (place_type int dest)]
+
+    | BApply (i1, i2) ->
+        let* fn = tid_of TFun in
+        let i1 = get_place info i1 in
+        let i2 = get_place info i2 in
+        emit [sf "CALL(%a, %a, %a);" 
+          fmt_place_loc (place_type fn i1) 
+          fmt_place_ptr dest 
+          fmt_place_loc i2]
+    
+
+    | BProj (id, lbl) ->
+        let* id_u, id_uid = union_of id in
+        let* pp_u, pp_uid = union_of pp in
+        let id_place = get_place info id in
+
+        let* pp_u_size = size_of_union pp_u in
+
+        let emit_proj src =
+          if pp_u_size <= 8 then
+            emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr dest fmt_place_ptr src fmt_union pp_uid]
+          else
+            emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr dest fmt_place_loc src fmt_union pp_uid]
+        in
+
+        let handle_case_of tid =
+          let+ ty = type_of_tid tid in  
+          match ty with
+          | TRec fields ->
+            begin match List.assoc_opt lbl fields with
+            | Some field_ty -> 
+              Some (
+                let* field_tid = tid_of field_ty in
+                let* set_tag = tag_setter field_tid pp dest in
+                Option.value set_tag ~default:(State.pure ()) *>
+                emit_proj (place_field lbl (place_type tid id_place)))
+            | _ -> None
+            end
+          | _ ->
+            None
+        in
+        
+        if Int_Set.cardinal id_u = 1 then
+          let tid = Int_Set.choose id_u in
+          handle_case_of tid >>= Option.get
+        else
+        bracketed_indented
+          [sf "switch (%a.tag) {" fmt_place_loc id_place] ["}"]
+        begin
+          let* () =
+            Int_Set.elements id_u |> Lists.traverse_ (fun tid ->
+              handle_case_of tid >>= function
+              | None -> State.pure ()
+              | Some(handle) ->
+              emit [sf "case %a_%a:" fmt_union id_uid fmt_type tid] *>
+              indent begin
+                handle *>
+                emit ["break;"]
+              end
+            )
+          in
+          emit ["default:"] *>
+          indent (emit ["ABORT;"])
+        end 
+
+
+    | BMatch (i1, branches) ->
+        let* { tag_tables; _ } = State.ask in
+        let* i1_u, i1_uid = union_of i1 in
+        let i1 = get_place info i1 in
+        let open Map_Util(Int)(Type_Tag_Map) in
+        let tag_to_branch  = ID_Map.find pp tag_tables.match_tables in
+        let branch_to_tags = invert tag_to_branch in
+        if Int_Set.cardinal i1_u = 1 then
+          let i1_tid = Int_Set.choose i1_u in
+          let branch_ix = Type_Tag_Map.find (Tag i1_tid) tag_to_branch in
+          let (_, branch) = List.nth branches branch_ix in
+          emit_clauses info dest branch
+        else
+        let module Invert_Maps = Traversable_Util(Maps(Invert_Map)) in
+        let module Invert_Maps = Invert_Maps.Make_Traversable(State) in
+        bracketed_indented
+          [sf "switch (%a.tag) {" fmt_place_loc i1] ["}"]
+        begin
+          let* () = branch_to_tags
+            |> Invert_Map.mapi (fun branch_ix tids ->
+                let* () = tids |> Lists.traverse_ 
+                  (fun (Tag tid) -> emit [sf "case %a_%a:" fmt_union i1_uid fmt_type tid]) in
+                let (_, branch) = List.nth branches branch_ix in
+                bracketed_indented ["{"] ["}"]
+                begin
+                  emit_clauses info dest branch *>
+                  emit ["break;"]
+                end)
+            |> Invert_Maps.sequence_
+          in
+          emit ["default:"] *>
+          indent (emit ["ABORT;"])
+        end
+
+    | BOpr ((OPlus (i1, i2) | OMinus (i1, i2)) as o) ->
+        let* int = tid_of TInt in
+        let* i1_place = assert_place_type i1 int (get_place info i1) in
+        let* i2_place = assert_place_type i2 int (get_place info i2) in
+        let* set_tag = tag_setter_exn int pp dest in
+        let[@warning "-8"] op = match o with 
+          | OPlus  (_, _) -> "+"
+          | OMinus (_, _) -> "-"
+        in
+        set_tag *> 
+        emit [sf "%a = %a %s %a;" fmt_place_loc (place_type int dest) fmt_place_loc i1_place op fmt_place_loc i2_place] 
+
+    | BOpr ((OEquals (i1, i2) | OLess (i1, i2)) as o) ->
+        let* int = tid_of TInt in
+        let* tru = tid_of TTrue in
+        let* fal = tid_of TFalse in
+        
+        let* set_fal = tag_setter fal pp dest in
+        let* set_tru = tag_setter tru pp dest in
+
+        let* i1_place = assert_place_type i1 int (get_place info i1) in
+        let* i2_place = assert_place_type i2 int (get_place info i2) in
+
+        begin match set_tru, set_fal with
+        | None, None -> raise Type_Mismatch
+        | Some t, None -> t
+        | None, Some f -> f
+        | Some t, Some f ->
+        let[@warning "-8"] op = match o with 
+          | OEquals (_, _) -> "=="
+          | OLess   (_, _) -> "<"
+        in
+        bracketed_indented [sf "if (%a %s %a) {" fmt_place_loc i1_place op fmt_place_loc i2_place] ["}"] t *>
+        bracketed_indented ["else {"] ["}"] f
+        end
+
+    | BOpr ((OAnd (i1, i2) | OOr (i1, i2)) as o) ->
+        let* tru = tid_of TTrue in
+        let* fal = tid_of TFalse in
+        let* set_fal = tag_setter fal pp dest in
+        let* set_tru = tag_setter tru pp dest in
+
+        begin match set_tru, set_fal with
+        | None, None -> raise Type_Mismatch
+        | Some t, None -> t
+        | None, Some f -> f
+        | Some t, Some f ->
+
+          let* i1_u, _ = union_of i1 in
+          let* i2_u, _ = union_of i2 in
+          let emit_check opstr = 
+              let* i1_t = is_true i1 (get_place info i1) in
+              let* i2_t = is_true i2 (get_place info i2) in
+              bracketed_indented [sf "if (%s %s %s) {" i1_t opstr i2_t] ["}"] t *>
+              bracketed_indented ["else {"] ["}"] f
+          in
+          begin[@warning "-8"] match o with
+          | OAnd (_, _) -> 
+              if (not @@ Int_Set.mem tru i1_u) || (not @@ Int_Set.mem tru i2_u) then
+                f
+              else if (not @@ Int_Set.mem fal i1_u) && (not @@ Int_Set.mem fal i2_u) then
+                t
+              else
+                emit_check "&&"
+
+          | OOr (_, _) -> 
+              if (not @@ Int_Set.mem tru i1_u) && (not @@ Int_Set.mem tru i2_u) then
+                f
+              else if (not @@ Int_Set.mem fal i1_u) || (not @@ Int_Set.mem fal i2_u) then
+                t
+              else
+                emit_check "||"
+          end
+        end
+
+    | _ ->
+        emit ["// TODO"]
+
+
+  let compile expr : unit State.t =
     emit_prelude
     *> emit_type_decls
     *> emit_union_decls
     *> emit_closure_struct_decls
     *> emit_closure_function_decls
+    *> emit_closure_defn "__main" expr
+    *> emit_deferred
     (* *> emit_epilogue *)
 
   let compile_string ?analysis expr : string =
@@ -200,7 +711,7 @@ module C = struct
     | Some a -> a
     | None   -> Analysis.full_analysis_of expr
     in
-    let (_, emitted, ()) = compile expr analysis { deferred = [] } in
+    let (_, emitted, ()) = compile expr analysis { deferred = Diff_list.nil; counter = 0; } in
       String.concat "\n" (Diff_list.to_list emitted)
 
 end

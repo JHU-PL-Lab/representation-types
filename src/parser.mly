@@ -39,6 +39,20 @@
 
 %%
 
+let separated_list_trailing(sep, elem) :=
+  | { [] }
+  | rest = separated_nonempty_list_trailing(sep, elem); { rest }
+
+let separated_nonempty_list_trailing(sep, elem) :=
+  | ~ = elem; { [elem] }
+  | ~ = elem; sep; rest = option(separated_nonempty_list_trailing(sep, elem));
+  {
+    match rest with
+    | None -> [elem]
+    | Some(rest) -> elem :: rest
+  }
+
+
 let main :=
   | ~ = ssa; EOF; { run_pstate ssa }
 
@@ -54,7 +68,7 @@ let pattern_type :=
   | KW_INT;   { TInt   }
   | KW_FUN;   { TFun   }
   | UNIV_PAT; { TUniv  }
-  | LBRACE; fields = separated_list(SEMICOLON, record_field_type); RBRACE;
+  | LBRACE; fields = separated_list_trailing(SEMICOLON, record_field_type); RBRACE;
     { TRec fields }
 
 let record_field_type ==
@@ -178,7 +192,7 @@ let literal :=
   | i = INTEGER; { pure (VInt i) }
   | KW_TRUE;     { pure VTrue }
   | KW_FALSE;    { pure VFalse }
-  | LBRACE; fields = separated_list(SEMICOLON, record_field_literal); RBRACE;
+  | LBRACE; fields = separated_list_trailing(SEMICOLON, record_field_literal); RBRACE;
     {
       let+ fields = sequence fields
       in VRec fields

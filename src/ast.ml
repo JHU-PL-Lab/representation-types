@@ -120,38 +120,22 @@ let rec pp_value' fmt =
         );
         Format.fprintf fmt "@,@]}"
       end
-  | VFun (id, body) ->
-      Format.fprintf fmt "fu@[<hv>n %s ->@ " id;
-      Format.fprintf fmt "%a@,@]" pp_expr body
+  | VFun (id, _body) ->
+      Format.fprintf fmt "fun %s -> (...)" id
 
 and pp_body' fmt =
   function
   | BVar id         -> Format.fprintf fmt "%s" id
-  | BVal v          -> pp_value fmt v
-  | BOpr o          -> pp_operator fmt o
+  | BVal v          -> pp_value' fmt v
+  | BOpr o          -> pp_operator' fmt o
   | BApply (i1, i2) -> Format.fprintf fmt "%s %s" i1 i2
   | BProj (id, lbl) -> Format.fprintf fmt "%s.%s" id lbl
   | BInput          -> Format.fprintf fmt "input"
-  | BMatch (id, branches) ->
-      Format.fprintf fmt "@[<v>match %s with" id;
-      branches |> List.iter (fun (ty, expr) ->
-        Format.fprintf fmt "@;| %a ->@[@ %a@]"
-          pp_simple_type ty pp_expr expr
-      );
-      Format.fprintf fmt "@;end@,@]"
+  | BMatch (id, _branches) ->
+      Format.fprintf fmt "match %s with ..." id
 
 and pp_clause' fmt (Cl (id, body)) =
-  Format.fprintf fmt "le@[<hv>t %s =@ %a@ @]in" id pp_body body
-
-and pp_expr' fmt =
-  function
-  | [] -> Format.fprintf fmt "(* empty expr (!?) *)"
-  | [Cl (id, body)] ->
-    Format.fprintf fmt
-      "%a (* %s *)" pp_body body id
-  | cl :: cls ->
-    Format.fprintf fmt
-      "@[<v>%a@;%a@]" pp_clause cl pp_expr cls
+  Format.fprintf fmt "let %s = %a" id pp_body' body
 
   
 (**
@@ -166,9 +150,9 @@ type 'env avalue =
   | ABool of [ `T | `F ]
   | AFun  of 'env * ident * expr
   | ARec  of {
-    fields_id: ident ID_Map.t [@polyprinter pp_id_map]; (** The name of the value assigned to each field *)
-    fields_pp: ident ID_Map.t [@polyprinter pp_id_map]; (** The program point at which each field originated. *)
-    pp_envs:   'env  ID_Map.t [@polyprinter pp_id_map]; (** The context associated with each program point *)
+    fields_id : ident ID_Map.t [@polyprinter pp_id_map]; (** The name of the value assigned to each field *)
+    fields_pp : ident ID_Map.t [@polyprinter pp_id_map]; (** The program point at which each field originated. *)
+    pp_envs   : 'env  ID_Map.t [@polyprinter pp_id_map]; (** The context associated with each program point *)
   }
   [@@deriving show { with_path = false }, eq, ord]
 

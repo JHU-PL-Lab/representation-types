@@ -143,6 +143,21 @@ module Set_Util (S : Set.S) = struct
 
 end
 
+module Map_Util(Val : Map.OrderedType)(M : Map.S) = struct
+
+  module Invert_Map = Map.Make(Val)
+
+  let invert (m : Val.t M.t) : M.key list Invert_Map.t =
+    M.fold (fun k v ->
+      Invert_Map.update v
+        (function
+        | None    -> Some [k]
+        | Some ks -> Some (k :: ks)
+        )
+    ) m Invert_Map.empty
+
+end
+
 
 (**
   Pretty-printing
