@@ -179,7 +179,7 @@ let expr4 :=
   | ~ = expr5; <>
 
 let expr5 :=
-  | e1 = expr5; PROJ_DOT; field = IDENTIFIER; {
+  | e1 = expr5; PROJ_DOT; field = record_proj_name; {
     let+ i1 = emit' e1
     in BProj (i1, field)
   }
@@ -192,12 +192,24 @@ let literal :=
   | i = INTEGER; { pure (VInt i) }
   | KW_TRUE;     { pure VTrue }
   | KW_FALSE;    { pure VFalse }
+  | ~ = record_literal; <>
+  
+
+let record_literal ==
   | LBRACE; fields = separated_list_trailing(SEMICOLON, record_field_literal); RBRACE;
     {
-      let+ fields = sequence fields
-      in VRec fields
+      let+ fields = sequence fields in
+      VRec fields
+    } 
+  | LPAREN; exprs = separated_list_trailing(SEMICOLON, expr); RPAREN; 
+    {
+      let+ exprs = traverse emit' exprs in
+      VRec (exprs |> List.mapi (fun i expr -> (string_of_int i, expr)))
     }
-  
+
+let record_proj_name ==
+  | field = IDENTIFIER; { field }
+  | field = INTEGER;    { string_of_int field }
 
 let record_field_literal ==
   | field = IDENTIFIER; GETS; expr = expr; {

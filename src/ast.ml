@@ -39,7 +39,7 @@ let pp_operator' fmt =
   | OAnd    (i1, i2) -> Format.fprintf fmt "%s and %s" i1 i2
   | OOr     (i1, i2) -> Format.fprintf fmt "%s or %s" i1 i2
   | ONot    i1       -> Format.fprintf fmt "not %s" i1
-  | OAppend (i1, i2) -> Format.fprintf fmt "%s @ %s" i1 i2
+  | OAppend (i1, i2) -> Format.fprintf fmt "%s %@ %s" i1 i2
   
 (**
   The type of static values.

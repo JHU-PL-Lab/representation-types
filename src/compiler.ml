@@ -29,6 +29,7 @@ typedef struct {
 #define ABORT exit(EXIT_FAILURE)
 #define COPY(...) __builtin_memcpy(__VA_ARGS__)
 #define CALL(c, ...) ((c)->_func)((c), __VA_ARGS__)
+#define COMBINE(a, b) (a) >= (b) ? (a) * (a) + (a) + (b) : (a) + (b) * (b)
 #define INIT_CLOSURE(ptr, type, ...) \
   do { \
     ptr = malloc(sizeof(type)); \
@@ -88,6 +89,12 @@ module C = struct
   module ID_Map = struct
     include ID_Map
     include Traversable_Util(Maps(ID_Map))
+    include Make_Traversable(State)
+  end
+
+  module Type_Tag_Pair_Map = struct
+    include Type_Tag_Pair_Map
+    include Traversable_Util(Maps(Type_Tag_Pair_Map))
     include Make_Traversable(State)
   end
 
@@ -175,7 +182,9 @@ module C = struct
     match ID_Map.find id info.scope with
     | exception _ -> raise Open_Expression
     | Captured -> `Loc (sf "clo->%s" id)
-    | _        -> `Loc id
+    | Local    -> `Loc id
+    | Argument -> `Ptr id
+    | _ -> failwith "Won't happen."
 
     
   let fmt_place_ptr fmt place =
@@ -330,7 +339,7 @@ module C = struct
       Some (State.pure ())
     else
       Some (
-        emit [sf "%a.tag = %a_%a;" fmt_place_loc place fmt_union uid fmt_type tid]
+        emit [sf "%a = %a_%a;" fmt_place_loc (place_field "tag" place) fmt_union uid fmt_type tid]
       )
 
   let tag_setter_exn tid pp place =
@@ -358,7 +367,7 @@ module C = struct
     else if Int_Set.cardinal u = 1 then
       "1"
     else
-      sf "(%a.tag == %a_%a)" fmt_place_loc place fmt_union uid fmt_type tru
+      sf "%a.tag == %a_%a" fmt_place_loc place fmt_union uid fmt_type tru
 
   let is_false pp place =
     let* fal = tid_of TFalse in
@@ -368,7 +377,7 @@ module C = struct
     else if Int_Set.cardinal u = 1 then
       "1"
     else
-      sf "(%a.tag == %a_%a)" fmt_place_loc place fmt_union uid fmt_type fal
+      sf "%a.tag == %a_%a" fmt_place_loc place fmt_union uid fmt_type fal
 
 
 
@@ -398,7 +407,7 @@ module C = struct
           info.return]
     | Some arg -> 
         let+ arg_uid = uid_of arg in
-        [sf "void %a(const %a *clo, %a *restrict %s, %a %s) {" 
+        [sf "void %a(const %a *clo, %a *restrict %s, const %a *%s) {" 
           fmt_closure_impl name 
           fmt_closure_type name 
           fmt_union return_uid 
@@ -428,7 +437,7 @@ module C = struct
         in
         set_tag *>
         if List.length captured = 0 then
-          emit [sf "static %a %a$ = { ._func = %a };" fmt_closure_type pp fmt_closure_impl pp fmt_closure_impl pp] *>
+          emit [sf "static const %a %a$ = { ._func = %a };" fmt_closure_type pp fmt_closure_impl pp fmt_closure_impl pp] *>
           emit [sf "%a = (Closure*)&%a$;" fmt_place_loc (place_type fn dest) fmt_closure_impl pp]
         else
         bracketed_indented
@@ -483,7 +492,7 @@ module C = struct
                 type_tags |> Lists.traverse_ (fun tid ->
                   let field_tags' = ID_Map.add lbl (Tag tid) field_tags in
                   emit [sf "case %a_%a:" fmt_union id_uid fmt_type tid] *>
-                  indent (emit_switches field_tags' fields)  
+                  indent ((emit_switches field_tags' fields) *> emit ["break;"])
                 )
               end
 
@@ -492,7 +501,7 @@ module C = struct
           | None          -> emit ["ABORT;"]
           | Some(Tag tid) -> 
               let* set_tag = tag_setter_exn tid pp dest in
-              set_tag *> init_fields (place_type tid dest)
+              set_tag *> init_fields (place_type tid dest) (* **> emit ["break;"] *)
         in
         emit_switches
           ID_Map.empty
@@ -525,7 +534,7 @@ module C = struct
         emit [sf "CALL(%a, %a, %a);" 
           fmt_place_loc (place_type fn i1) 
           fmt_place_ptr dest 
-          fmt_place_loc i2]
+          fmt_place_ptr i2]
     
 
     | BProj (id, lbl) ->
@@ -564,7 +573,7 @@ module C = struct
           handle_case_of tid >>= Option.get
         else
         bracketed_indented
-          [sf "switch (%a.tag) {" fmt_place_loc id_place] ["}"]
+          [sf "switch (%a) {" fmt_place_loc (place_field "tag" id_place)] ["}"]
         begin
           let* () =
             Int_Set.elements id_u |> Lists.traverse_ (fun tid ->
@@ -670,7 +679,7 @@ module C = struct
           let emit_check opstr = 
               let* i1_t = is_true i1 (get_place info i1) in
               let* i2_t = is_true i2 (get_place info i2) in
-              bracketed_indented [sf "if (%s %s %s) {" i1_t opstr i2_t] ["}"] t *>
+              bracketed_indented [sf "if ((%s) %s (%s)) {" i1_t opstr i2_t] ["}"] t *>
               bracketed_indented ["else {"] ["}"] f
           in
           begin[@warning "-8"] match o with
@@ -692,8 +701,92 @@ module C = struct
           end
         end
 
+    | BOpr (ONot i1) ->
+        let* tru = tid_of TTrue in
+        let* fal = tid_of TFalse in
+        let* set_fal = tag_setter fal pp dest in
+        let* set_tru = tag_setter tru pp dest in
+        
+        begin match set_tru, set_fal with
+        | None, None -> raise Type_Mismatch
+        | Some t, None -> t
+        | None, Some f -> f
+        | Some t, Some f ->
+          let* i1_u, _ = union_of i1 in
+          if not (Int_Set.mem tru i1_u) then
+            t
+          else if not (Int_Set.mem fal i1_u) then
+            f
+          else
+          let* is_i1_true = is_true i1 (get_place info i1) in
+          bracketed_indented [sf "if (%s) {" is_i1_true] ["}"] f *>
+          bracketed_indented ["else {"] ["}"] t
+        end
+
+    | BOpr (OAppend (i1, i2)) ->
+        let* { tag_tables; _ } = State.ask in
+        let append_table = ID_Map.find pp tag_tables.append_tables in
+        
+        let* pp_u, _ = union_of pp in
+        let* i1_u, i1_uid = union_of i1 in
+        let i1_place = get_place info i1 in
+        let* i2_u, i2_uid = union_of i2 in
+        let i2_place = get_place info i2 in
+
+        let combined_tags t1 t2 =
+          if Int_Set.cardinal i1_u = 1 then 
+            t2
+          else if Int_Set.cardinal i2_u = 1 then
+            t1
+          else
+            sf "COMBINE(%s, %s)" t1 t2
+        in
+
+        let init_from_tids t1 t2 tp =
+          let* ty1 = type_of_tid t1 in
+          let* ty2 = type_of_tid t2 in
+          let* set_tag = tag_setter_exn tp pp dest in
+          set_tag *>
+          match ty1, ty2 with
+          | TRec r1, TRec r2 ->
+              let f2 = ID_Set.of_list (List.map fst r2) in
+              let f1 = ID_Set.of_list (List.map fst r1) |> (fun f1 -> ID_Set.diff f1 f2) in
+              let init_lbl src lbl =
+                emit [sf "%a = %a;"
+                  fmt_place_loc (place_field lbl (place_type tp dest))
+                  fmt_place_loc (place_field lbl src)]
+              in
+              let* () = f1 |> ID_Set.to_seq |> Seqs.traverse_ (init_lbl (place_type t1 i1_place)) in
+              f2 |> ID_Set.to_seq |> Seqs.traverse_ (init_lbl (place_type t2 i2_place))
+
+          | _ -> raise Type_Mismatch
+        in
+
+        if Int_Set.cardinal i1_u = 1 && Int_Set.cardinal i2_u = 1 then
+          init_from_tids (Int_Set.choose i1_u) (Int_Set.choose i2_u) (Int_Set.choose pp_u)
+        else
+        bracketed_indented
+          [sf "switch (%s) {"
+            (combined_tags (i1_place |> place_field "tag" |> place_to_str)
+                           (i2_place |> place_field "tag" |> place_to_str))]
+          ["}"]
+        begin
+          append_table
+          |> Type_Tag_Pair_Map.mapi (fun (Tag t1, Tag t2) (Tag tp) ->
+            let t1s = sf "%a_%a" fmt_union i1_uid fmt_type t1 in
+            let t2s = sf "%a_%a" fmt_union i2_uid fmt_type t2 in
+            emit [sf "case %s:" (combined_tags t1s t2s)] *>
+            indent begin
+              init_from_tids t1 t2 tp *>
+              emit ["break;"]
+            end
+          )
+          |> Type_Tag_Pair_Map.sequence_
+        end
+(* 
     | _ ->
         emit ["// TODO"]
+*)
 
 
   let compile expr : unit State.t =

@@ -152,8 +152,12 @@ module Closures = struct
   type variable_kind =
     | Local 
       (** 
-        Variables which are either arguments to the current function,
-        or allocated on the stack. Both have the same access syntax.
+        Variables which are allocated on the stack.
+      *)
+    | Argument
+      (**
+        Variables which are arguments to the current procedure.
+        These may be pointers, or may not.
       *)
     | Available
       (**
@@ -205,9 +209,9 @@ module Closures = struct
   open Traversable_Util(Lists)
   open Lists.Make_Traversable(State)
 
-  let add_local id =
+  let add_var kind id =
     State.modify (fun s -> { s with
-      curr_scope = s.curr_scope |> ID_Map.add id Local;
+      curr_scope = s.curr_scope |> ID_Map.add id kind;
       curr_pp    = id;
     })
 
@@ -228,7 +232,7 @@ module Closures = struct
 
   and visit_clause (Cl (id, body)) =
     visit_body id body *>
-    add_local id
+    add_var Local id
 
   and visit_body pp =
     function
@@ -246,6 +250,9 @@ module Closures = struct
         
     | BVar i1
     | BOpr (ONot i1) ->
+        use_var i1
+
+    | BProj (i1, _) ->
         use_var i1
 
     | BMatch (id, branches) ->
@@ -287,7 +294,7 @@ module Closures = struct
                 s'.curr_scope;
           })
           begin
-            add_local id *>
+            add_var Argument id *>
             visit_expr expr
           end
     
