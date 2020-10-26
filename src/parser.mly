@@ -39,6 +39,10 @@
 
 %%
 
+let separated_list_trailing1(sep, elem) :=
+  | { [] }
+  | first = elem; sep; rest = separated_list_trailing(sep, elem); { first :: rest }
+
 let separated_list_trailing(sep, elem) :=
   | { [] }
   | rest = separated_nonempty_list_trailing(sep, elem); { rest }
@@ -68,8 +72,15 @@ let pattern_type :=
   | KW_INT;   { TInt   }
   | KW_FUN;   { TFun   }
   | UNIV_PAT; { TUniv  }
+  | ~ = record_type; <>
+  
+  
+let record_type ==
   | LBRACE; fields = separated_list_trailing(SEMICOLON, record_field_type); RBRACE;
     { TRec fields }
+  | LPAREN; fields = separated_list_trailing(SEMICOLON, pattern_type); RPAREN;
+    { TRec (fields |> List.mapi (fun i ty -> ("_" ^ string_of_int i, ty))) }
+
 
 let record_field_type ==
   separated_pair(IDENTIFIER, COLON, pattern_type)
@@ -195,21 +206,21 @@ let literal :=
   | ~ = record_literal; <>
   
 
-let record_literal ==
+let record_literal :=
   | LBRACE; fields = separated_list_trailing(SEMICOLON, record_field_literal); RBRACE;
     {
       let+ fields = sequence fields in
       VRec fields
     } 
-  | LPAREN; exprs = separated_list_trailing(SEMICOLON, expr); RPAREN; 
+  | LPAREN; exprs = separated_list_trailing1(SEMICOLON, expr); RPAREN;
     {
       let+ exprs = traverse emit' exprs in
-      VRec (exprs |> List.mapi (fun i expr -> (string_of_int i, expr)))
+      VRec (exprs |> List.mapi (fun i expr -> ("_" ^ string_of_int i, expr)))
     }
 
 let record_proj_name ==
   | field = IDENTIFIER; { field }
-  | field = INTEGER;    { string_of_int field }
+  | field = INTEGER;    { "_" ^ string_of_int field }
 
 let record_field_literal ==
   | field = IDENTIFIER; GETS; expr = expr; {
