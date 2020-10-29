@@ -205,11 +205,12 @@ module C = struct
 
   let uid_of name =
     let+ { inferred_types; _ } = State.ask in
-    ID_Map.find name inferred_types.pp_to_union_id
+    ID_Map.find_opt name inferred_types.pp_to_union_id
+    |> Option.value ~default:0
 
   let union_of name =
-    let+ { inferred_types; _ } = State.ask in
-    let uid = ID_Map.find name inferred_types.pp_to_union_id in
+    let* { inferred_types; _ } = State.ask in
+    let+ uid = uid_of name in
     let union = Int_Map.find uid inferred_types.id_to_union in
     (union, uid)
 
@@ -230,7 +231,7 @@ module C = struct
         List.fold_left
           (fun acc (_, ty) ->
               acc + max (size_of_type_repr ty) 8) 
-          0 
+          8 
           fields
 
   let size_of_union u =
@@ -274,7 +275,7 @@ module C = struct
     id_to_union
     |> Lists.traverse_ (fun (id, tys) ->
       if Int_Set.cardinal tys = 0 then
-        emit [sf "typedef Univ %a;\n" fmt_union id]
+        emit [sf "typedef Empty %a;\n" fmt_union id]
       else if Int_Set.cardinal tys = 1 then
         let tid = Int_Set.choose tys in
         emit [sf "typedef struct { %a %a; } %a;" fmt_type tid fmt_type tid fmt_union id]
@@ -327,6 +328,25 @@ module C = struct
       |> ID_Map.sequence
     in
       emit [""]
+
+
+  let emit_type_printer_decls =
+    let* { inferred_types; _ } = State.ask in
+    let* () = 
+      inferred_types.id_to_type
+      |> Int_Map.bindings
+      |> Lists.traverse_ (fun (id, _) ->
+        emit [sf "void fprint_%a(FILE *, const %a*);" fmt_type id fmt_type id]  
+      )
+    in
+    let* () =
+      inferred_types.id_to_union
+      |> Int_Map.bindings
+      |> Lists.traverse_ (fun (id, _) ->
+        emit [sf "void fprint_%a(FILE *, const %a*);" fmt_union id fmt_union id]    
+      )
+    in
+    emit [""]
 
   (**
     Figure out how to set the tag, if necessary.
@@ -385,13 +405,24 @@ module C = struct
     function
     | [] -> raise Empty_Expression
     | Cl (pp, body) as cl :: [] ->
+        let* pp_u, _ = union_of pp in
         emit [sf "/* %a */" pp_clause' cl] *>
-        emit_body info pp dest body
+        begin
+          if Int_Set.cardinal pp_u != 0 then
+            emit_body info pp dest body
+          else
+            State.pure ()
+        end
     | Cl (pp, body) as cl :: cls ->
-        let* pp_uid = uid_of pp in
+        let* pp_u, pp_uid = union_of pp in
         emit [sf "/* %a */" pp_clause' cl] *>
         emit [sf "%a %s;" fmt_union pp_uid pp] *>
-        emit_body info pp (`Loc pp) body *>
+        begin
+          if Int_Set.cardinal pp_u != 0 then
+            emit_body info pp (`Loc pp) body
+          else
+            State.pure ()
+        end *>
         emit [""] *>
         emit_clauses info dest cls
 
@@ -467,7 +498,8 @@ module C = struct
         in
         
         if Int_Set.cardinal pp_u = 1 then
-          init_fields (place_type (Int_Set.choose pp_u) dest)
+          let place = place_type (Int_Set.choose pp_u) dest in
+          init_fields place
         else
         let open Map_Util(struct type t = type_tag [@@deriving ord] end)(Field_Tags_Map) in
         let inverted_fields = invert record_table in
@@ -608,7 +640,7 @@ module C = struct
         let module Invert_Maps = Traversable_Util(Maps(Invert_Map)) in
         let module Invert_Maps = Invert_Maps.Make_Traversable(State) in
         bracketed_indented
-          [sf "switch (%a.tag) {" fmt_place_loc i1] ["}"]
+          [sf "switch (%a) {" fmt_place_loc (place_field "tag" i1)] ["}"]
         begin
           let* () = branch_to_tags
             |> Invert_Map.mapi (fun branch_ix tids ->
@@ -626,7 +658,7 @@ module C = struct
           indent (emit ["ABORT;"])
         end
 
-    | BOpr ((OPlus (i1, i2) | OMinus (i1, i2)) as o) ->
+    | BOpr ((OPlus (i1, i2) | OMinus (i1, i2) | OTimes (i1, i2)) as o) ->
         let* int = tid_of TInt in
         let* i1_place = assert_place_type i1 int (get_place info i1) in
         let* i2_place = assert_place_type i2 int (get_place info i2) in
@@ -634,6 +666,7 @@ module C = struct
         let[@warning "-8"] op = match o with 
           | OPlus  (_, _) -> "+"
           | OMinus (_, _) -> "-"
+          | OTimes (_, _) -> "*"
         in
         set_tag *> 
         emit [sf "%a = %a %s %a;" fmt_place_loc (place_type int dest) fmt_place_loc i1_place op fmt_place_loc i2_place] 
@@ -791,10 +824,12 @@ module C = struct
 
   let compile expr : unit State.t =
     emit_prelude
+    *> emit_record_id_t
     *> emit_type_decls
     *> emit_union_decls
     *> emit_closure_struct_decls
     *> emit_closure_function_decls
+    *> emit_type_printer_decls
     *> emit_closure_defn "__main" expr
     *> emit_deferred
     (* *> emit_epilogue *)

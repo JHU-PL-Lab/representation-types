@@ -170,27 +170,35 @@ let expr3 :=
     and+ i2 = emit' e2
     in BOpr (OMinus (i1, i2))
   }
-  | (e1, e2) = sep_pair(expr3, OP_APPEND, expr4); {
+  | ~ = expr4; <>
+
+let expr4 :=
+  | (e1, e2) = sep_pair(expr4, OP_APPEND, expr5); {
     let+ i1 = emit' e1
     and+ i2 = emit' e2
     in BOpr (OAppend (i1, i2))
   }
-  | KW_NOT; e1 = expr4; {
-    let+ i1 = emit' e1
-    in BOpr (ONot i1)
-  }
-  | ~ = expr4; <>
-
-let expr4 :=
-  | (e1, e2) = pair(expr4, expr5); {
+  | (e1, e2) = sep_pair(expr4, UNIV_PAT, expr5); {
     let+ i1 = emit' e1
     and+ i2 = emit' e2
-    in BApply (i1, i2)
+    in BOpr (OTimes (i1, i2))
+  }
+  | KW_NOT; e1 = expr5; {
+    let+ i1 = emit' e1
+    in BOpr (ONot i1)
   }
   | ~ = expr5; <>
 
 let expr5 :=
-  | e1 = expr5; PROJ_DOT; field = record_proj_name; {
+  | (e1, e2) = pair(expr5, expr6); {
+    let+ i1 = emit' e1
+    and+ i2 = emit' e2
+    in BApply (i1, i2)
+  }
+  | ~ = expr6; <>
+
+let expr6 :=
+  | e1 = expr6; PROJ_DOT; field = record_proj_name; {
     let+ i1 = emit' e1
     in BProj (i1, field)
   }

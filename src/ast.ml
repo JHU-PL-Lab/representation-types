@@ -22,6 +22,7 @@ type ident = string
 type operator =
   | OPlus   of ident * ident (** Integer Addition. *)
   | OMinus  of ident * ident (** Integer Subtraction. *)
+  | OTimes  of ident * ident (** Integer Multiplication. *)
   | OLess   of ident * ident (** Integer Ordering. *)
   | OEquals of ident * ident (** Integer Equality. *)
   | OAnd    of ident * ident (** Boolean Conjunction. *)
@@ -34,6 +35,7 @@ let pp_operator' fmt =
   function
   | OPlus   (i1, i2) -> Format.fprintf fmt "%s + %s" i1 i2
   | OMinus  (i1, i2) -> Format.fprintf fmt "%s - %s" i1 i2
+  | OTimes  (i1, i2) -> Format.fprintf fmt "%s * %s" i1 i2
   | OLess   (i1, i2) -> Format.fprintf fmt "%s < %s" i1 i2
   | OEquals (i1, i2) -> Format.fprintf fmt "%s == %s" i1 i2
   | OAnd    (i1, i2) -> Format.fprintf fmt "%s and %s" i1 i2

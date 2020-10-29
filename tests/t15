@@ -1,0 +1,38 @@
+
+let quat = fun q ->
+  { w = q.0; x = q.1; y = q.2; z = q.3 }
+in
+
+let neg = fun q ->
+  let O = 0 in
+  { w = O-q.w; x = O-q.x; y = O-q.y; z = O-q.z }
+in
+
+let conj = fun q ->
+  neg q @ { w = q.w }
+in
+
+let addS = fun s -> fun q ->
+  q @ { w = q.w+s }
+in
+
+let addQ = fun q1 -> fun q2 ->
+  { w = q1.w+q2.w; x = q1.x+q2.x; y = q1.y+q2.y; z = q1.z+q2.z }
+in
+
+let mulS = fun s -> fun q ->
+  { w = q.w*s; x = q.x*s; y = q.y*s; z = q.z*s }
+in
+
+let mulQ = fun q1 -> fun q2 ->
+  quat (
+    q1.w*q2.w - q1.x*q2.x - q1.y*q2.y - q1.z*q2.z;
+    q1.w*q2.x + q1.x*q2.w + q1.y*q2.z - q1.z*q2.y;
+    q1.w*q2.y - q1.x*q2.z + q1.y*q2.w + q1.z*q2.x;
+    q1.w*q2.z + q1.x*q2.y - q1.y*q2.x + q1.z*q2.w;
+  )
+in
+
+let q1 = quat (2; 3; 4; 5) in
+let q2 = quat (3; 4; 5; 6) in
+mulQ q1 q2  

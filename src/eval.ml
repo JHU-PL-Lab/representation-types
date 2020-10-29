@@ -261,6 +261,11 @@ module TaggedEvaluator = struct
       let$* (_, RInt r2) = lookup i2 in
       tagged TInt @@ RInt (r1 - r2)
 
+    | OTimes (i1, i2) ->
+      let$* (_, RInt r1) = lookup i1 in
+      let$* (_, RInt r2) = lookup i2 in
+      tagged TInt @@ RInt (r1 * r2)
+  
     | OLess (i1, i2) ->
       let$* (_, RInt r1) = lookup i1 in
       let$* (_, RInt r2) = lookup i2 in

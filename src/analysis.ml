@@ -240,6 +240,7 @@ module Closures = struct
     | BOpr
       ( OPlus   (i1, i2)
       | OMinus  (i1, i2)
+      | OTimes  (i1, i2)
       | OLess   (i1, i2)
       | OEquals (i1, i2)
       | OAnd    (i1, i2)
@@ -773,6 +774,15 @@ module FlowTracking = struct
         | _ -> original' [AInt `N; AInt `Z; AInt `P]
         end
 
+    | OTimes (i1, i2) ->
+        let$* _, AInt r1 = lookup' i1 in
+        let$* _, AInt r2 = lookup' i2 in
+        begin match r1, r2 with
+        | _, `Z   | `Z, _   -> original @@ AInt `Z
+        | `P, `N  | `N, `P  -> original @@ AInt `N
+        | _ -> original @@ AInt `P
+        end
+
     | OLess (i1, i2) ->
         let$* _, AInt r1 = lookup' i1 in
         let$* _, AInt r2 = lookup' i2 in
@@ -884,7 +894,7 @@ module FlowTracking = struct
     | [] -> raise Empty_Expression
     | Cl (id, body) :: cls ->
     let* body_value  = eval_body id body in
-    let* () = register_flow id body_value in
+    let* () = register_flow id body_value in 
     let body_value' = retag_aset (Source id) body_value in
     let* () = add_to_env' id body_value' in 
     match cls with
@@ -1233,18 +1243,14 @@ module Tagging = struct
 
     let* tag_maps = i1_tags |> traverse (fun t1 ->
       let* ty1 = type_of_tag t1 in
-      let ty1 = match ty1 with
-      | TRec ty1 -> ty1
-      | _ -> raise Type_Mismatch
-      in
+      match ty1 with
+      | TRec ty1 ->
       let ty1' = ty1 |> List.to_seq |> ID_Map.of_seq in
 
       i2_tags |> traverse (fun t2 ->
         let+ ty2 = type_of_tag t2 in
-        let ty2 = match ty2 with
-        | TRec ty2 -> ty2
-        | _ -> raise Type_Mismatch
-        in
+        match ty2 with
+        | TRec ty2 ->
         let ty2' = ty2 |> List.to_seq |> ID_Map.of_seq in
         
         let ty' = TRec (
@@ -1257,8 +1263,10 @@ module Tagging = struct
           Type_Tag_Pair_Map.singleton (t1, t2) (List.nth pp_tags t_ix)
         else
           Type_Tag_Pair_Map.empty
-      )
 
+        | _ -> Type_Tag_Pair_Map.empty
+      )
+      | _ -> State.pure []
     ) in
     let table = tag_maps
       |> List.flatten
