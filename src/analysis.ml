@@ -19,6 +19,35 @@ type exn +=
   | Match_Fallthrough
   | Empty_Expression
 
+
+(**
+  A helper module to compute a mapping from program point
+  names to their clauses (for example to lookup their exact definition.)
+*)
+module Clauses = struct
+
+  let rec visit_clause cl map =
+    let Cl (pp, body) = cl in
+    let map' = ID_Map.add pp body map in
+    match body with
+    | BVal (VFun (_, expr)) -> visit_expr expr map'
+    | BMatch (_, branches) ->
+        List.fold_left (fun map (_, expr)-> visit_expr expr map) map' branches
+    | _ ->
+        map'
+
+  and visit_expr expr map =
+    List.fold_left
+      (fun map cl -> visit_clause cl map) map expr
+
+  let pp_to_body expr =
+    let cs = ID_Map.empty in
+    visit_expr expr cs
+
+end
+
+
+
 (**
   Contains the simple algorithm for determining
   the maximum depth required of any particular record
@@ -71,7 +100,7 @@ module Matching = struct
   *)
   let rec visit_type : simple_type -> int State.t =
     function
-    | TRec record ->
+    | TRec (_, record) ->
       let* field_depths = record |> traverse (fun (lbl, ty) -> 
         let+ depth = visit_type ty in (lbl, depth)) 
       in
@@ -159,6 +188,11 @@ module Closures = struct
         Variables which are arguments to the current procedure.
         These may be pointers, or may not.
       *)
+    | Self_closure
+      (**
+        The variable representing the current closure itself,
+        which is always available for use as a recursion entry point.
+      *)
     | Available
       (**
         Variables which could be accessed from the captured environment
@@ -183,6 +217,7 @@ module Closures = struct
   *)
   type closure_info =
     {
+      name: ident;
       scope: scope;
       return: ident;
       argument: ident option;
@@ -250,7 +285,7 @@ module Closures = struct
         use_var i2
         
     | BVar i1
-    | BOpr (ONot i1) ->
+    | BOpr (ONot i1 | ONeg i1) ->
         use_var i1
 
     | BProj (i1, _) ->
@@ -273,7 +308,8 @@ module Closures = struct
           (fun s s' -> { s' with 
             curr_pp = s.curr_pp;
             info = begin
-              let new_info = { 
+              let new_info = {
+                name     = pp;
                 scope    = s'.curr_scope; 
                 return   = s'.curr_pp;
                 argument = Some(id);
@@ -295,6 +331,7 @@ module Closures = struct
                 s'.curr_scope;
           })
           begin
+            add_var Self_closure pp *>
             add_var Argument id *>
             visit_expr expr
           end
@@ -308,7 +345,8 @@ module Closures = struct
       curr_pp    = "";
       info       = ID_Map.empty;
     } in
-    s.info |> ID_Map.add "__main" { 
+    s.info |> ID_Map.add "__main" {
+      name     = "__main"; 
       scope    = s.curr_scope; 
       return   = s.curr_pp;
       argument = None;
@@ -340,15 +378,7 @@ module FlowTracking = struct
     | Source of Ast.ident (** Indicating values which have the source associated. *)
     [@@deriving show { with_path = false }, eq, ord]
 
-  (**
-    RValues paired with a {{!flow_tag} flow_tag}
-  *)
-  module Wrapper = WriterF(struct
-    type t = flow_tag 
-  end)
-
-  type avalue_spec = context Ast.avalue [@@deriving eq, ord, show]
-  type avalue      = flow_tag * avalue_spec [@@deriving eq, ord, show]
+  type avalue  = context Ast.avalue [@@deriving eq, ord, show]
 
   (**
     A mapping from the call context
@@ -380,6 +410,7 @@ module FlowTracking = struct
 
   (** Convenience alias *)
   type aset = Avalue_Set.t
+  type tset = flow_tag * aset
 
   (**
     The type used for our state.
@@ -451,8 +482,6 @@ module FlowTracking = struct
     include Make_Traversable(AState)
   end
 
-  let aset_of v = Avalue_Set.singleton v
-
   (**
     Map a simple function operating on single abstract values
     to work on sets of abstract values instead. If any particular
@@ -476,26 +505,30 @@ module FlowTracking = struct
     in
       Seq.fold_left Avalue_Set.union Avalue_Set.empty asets
 
+    
+
+  
+  (**
+    Convenience operator to pair a pure value with a
+    monadic computation (usually for pairing a source
+    program point with a set of avalues).
+  *)
+  let with_src id ma =
+    (fun a -> (id, a)) <$> ma
+
+  let project_pp_of id lbl =
+    id ^ "." ^ lbl
+
   (** 
     Convenience operator to tag an {!avalue} with the {!constructor-Original} tag. 
   *)
-  let original (av : avalue_spec) : aset AState.t =
-    AState.pure @@ Avalue_Set.singleton (Original, av)
+  let aset_of (av : avalue) : aset AState.t =
+    av |> Avalue_Set.singleton
+       |> AState.pure
 
-  let original' (avs : avalue_spec list) : aset AState.t =
-    avs |> List.map (fun av -> (Original, av))
-        |> Avalue_Set.of_list
+  let aset_of_list (avs : avalue list) : aset AState.t =
+    avs |> Avalue_Set.of_list
         |> AState.pure
-  
-  (**
-    Convenience operator to re-tag an {!avalue} with the given {!constructor-Source}.
-  *)
-  let retag_avalue src : avalue -> avalue =
-    fun (_, av) -> (src, av)
-
-  let retag_aset src : aset -> aset =
-    Avalue_Set.map (retag_avalue src)
-
 
   (**
     Look up an aset by name in the environment (with provided context)
@@ -516,8 +549,8 @@ module FlowTracking = struct
     Convenience operator to resolve a record to a particular
     nondeterministic possibility, mostly to get its type.
   *)
-  let resolve_record (av: avalue) : avalue ID_Map.t list AState.t =
-    match Wrapper.extract av with
+  let resolve_record : avalue ->  avalue ID_Map.t list AState.t =
+    function
     | ARec arec ->
       let+ map_of_lists = arec.fields_pp
         |> ID_Map.mapi (fun field field_pp ->
@@ -536,13 +569,14 @@ module FlowTracking = struct
   (**
     Convenience operator to project a record field.
   *)
-  let project_field lbl (av: avalue) : aset AState.t =
-    match Wrapper.extract av with
+  let project_field lbl : avalue -> aset AState.t =
+    function
     | ARec arec ->
         let field_id  = ID_Map.find lbl arec.fields_id in
         let field_pp  = ID_Map.find lbl arec.fields_pp in
         let field_ctx = ID_Map.find field_pp arec.pp_envs in
         lookup field_ctx field_id
+
     | _ ->
       raise Type_Mismatch
 
@@ -552,12 +586,12 @@ module FlowTracking = struct
     only as deeply as is required by the shape depths provided.
     Nondeterministic in the case of records!
   *)
-  let rec type_of ?(depth=Int.max_int) (av: aset) : Type_Set.t AState.t =
+  let rec type_of ?(remove_names=false) ?(depth=Int.max_int) (av: aset) : Type_Set.t AState.t =
     let pure_single ty = AState.pure (Type_Set.singleton ty) in
     if depth = 0 then pure_single TUniv else
     let avalue_seq = Avalue_Set.to_seq av in
-    let+ type_seq = avalue_seq |> Seqs.traverse (fun av ->
-      match Wrapper.extract av with
+    let+ type_seq = avalue_seq |> Seqs.traverse @@ fun av ->
+      match av with
       | ABool `T       -> pure_single TTrue
       | ABool `F       -> pure_single TFalse
       | AInt _         -> pure_single TInt
@@ -568,7 +602,7 @@ module FlowTracking = struct
             |> ID_Map.mapi (fun field _ ->
               let depth' = ID_Map.find field field_depths in
               let* av' = project_field field av in
-              let+ type_set = type_of ~depth:(min depth' (depth - 1)) av' in
+              let+ type_set = type_of ~remove_names:true ~depth:(min depth' (depth - 1)) av' in
               type_set
                 |> Type_Set.to_seq
                 |> List.of_seq (* <- see below *)
@@ -580,14 +614,15 @@ module FlowTracking = struct
               ) 
             |> ID_Map.sequence
           in
+          let t_name = if remove_names then None else Some(arec.name) in
           let open! ID_Map.Make_Traversable(Lists) in
           (record
             |> sequence (* gets cartesian product of each field's possible types *)
             |> List.map (fun id_map ->
               canonicalize_simple @@  
-                TRec (ID_Map.bindings id_map))
+                TRec (t_name, ID_Map.bindings id_map))
             |> Type_Set.of_list)
-    ) in
+    in
     Seq.fold_left
       Type_Set.union
       Type_Set.empty
@@ -599,26 +634,17 @@ module FlowTracking = struct
     the provided program point receiving the given
     avalue(s) as input.
   *)
-  let register_flow dest aset : unit AState.t =
-    let sources = aset 
-      |> Avalue_Set.to_seq 
-      |> Seq.filter_map (fun av ->
-        let (origin, _) = av in
-        match origin with
-        | Original   -> None
-        | Source src -> Some src
-      )
-      |> ID_Set.of_seq
-    in
-    let* () = AState.modify (fun s -> { s with 
+  let register_data_flow dest src : unit AState.t =
+    AState.modify (fun s -> { s with 
       data_flow = s.data_flow
         |> ID_Map.update dest
         (function
-        | Some src -> Some (ID_Set.union sources src)
-        | None     -> Some sources
+        | Some srcs -> Some (ID_Set.add src srcs)
+        | None      -> Some (ID_Set.singleton src)
         );
     })
-    in
+
+  let register_type_flow dest aset : unit AState.t =
     let* rt = type_of aset in
     AState.modify (fun s -> {s with 
       type_flow = s.type_flow
@@ -628,6 +654,8 @@ module FlowTracking = struct
         | None    -> Some rt
         );
     })
+
+
 
   let prune_context ctx : context AState.t =
     let+ { sensitivity; _ } = AState.ask in
@@ -683,24 +711,31 @@ module FlowTracking = struct
     AState.pure ()
 
 
-  let call_closure ctx pp id aset (ma : aset AState.t) : aset AState.t =
+  let call_closure ctx pp id src aset (ma : (label * aset) AState.t) : aset AState.t =
     let* ctx' = prune_context (pp :: ctx) in
-    
     (*
       Merge current environment into new one,
       allowing closure semantics to work.
     *)
     let* () = add_all_to_env ctx ctx' in
-
     let* () = add_to_env ctx' id aset in
     let* { env_version; pp_version; pp_cache; _ } = AState.get in
     let env_v = Context_Map.find ctx' env_version in
     match ID_Map.find_opt pp pp_version with
     | Some(pp_v) when pp_v = env_v ->
-        AState.pure (Option.value ~default:Avalue_Set.empty @@ ID_Map.find_opt pp pp_cache) (* memoize this call *) 
+      begin  
+        (* Format.eprintf "skip: %s version: %d\n" pp env_v; *)
+        AState.pure (
+          ID_Map.find_opt pp pp_cache
+          |> Option.value ~default:Avalue_Set.empty
+        ) (* memoize this call *)
+      end
     | _ ->
-        let* () = register_flow id aset in
-        let* a = ma |> AState.control
+      begin
+        (* Format.eprintf "eval: %s version: %d\n" pp env_v; *)
+        let* () = register_data_flow id src in
+        let* () = register_type_flow id aset in
+        let* final_pp, aset = ma |> AState.control
           (fun s    -> { s with 
               context    = ctx';
               pp_version = ID_Map.add pp env_v pp_version; 
@@ -709,139 +744,185 @@ module FlowTracking = struct
               context = s.context;
           })
         in
-        let+ () = AState.modify (fun s -> { s with
+        let* () = register_data_flow pp final_pp in
+        let* () = AState.modify (fun s -> { s with
           pp_cache = s.pp_cache |> ID_Map.update pp
             (function
-            | None    -> Some a
-            | Some a' -> Some (Avalue_Set.union a a')
+            | None    -> Some aset
+            | Some a' -> Some (Avalue_Set.union aset a')
             );
         })
-        in a
+        in
+        AState.gets 
+          (fun s -> ID_Map.find pp s.pp_cache)
+        (* Format.eprintf "result: %s version: %d = %a\n" pp env_v pp_aset aset; *)
+      end
 
-  let call_closure' pp id aset ma =
+  let call_closure' pp id src aset ma =
     let* { context; _ } = AState.get in
-    call_closure context pp id aset ma
+    call_closure context pp id src aset ma
 
   (**
     Convert a given {!type-Layout.Ast.value} into an aset
   *)
-  let eval_value pp v : avalue AState.t =
+  let eval_value pp v : aset AState.t =
     match v with
-    | VInt 0             -> AState.pure (Original, AInt `Z)
-    | VInt i when i > 0  -> AState.pure (Original, AInt `P)
-    | VInt _ (* i < 0 *) -> AState.pure (Original, AInt `N)
+    | VInt 0             -> aset_of (AInt `Z)
+    | VInt i when i > 0  -> aset_of (AInt `P)
+    | VInt _ (* i < 0 *) -> aset_of (AInt `N)
 
-    | VTrue  -> AState.pure (Original, ABool `T)
-    | VFalse -> AState.pure (Original, ABool `F)
+    | VTrue  -> aset_of (ABool `T)
+    | VFalse -> aset_of (ABool `F)
 
     | VFun (id, expr) ->
-        let+ { context; _ } = AState.get in
-        Original, AFun (context, id, expr)
+      let* { context; _ } = AState.get in
+      let* aset = aset_of @@ AFun (context, id, expr) in
+      add_to_env' pp aset $> aset
 
     | VRec record ->
-        let+ { context; _ } = AState.get in
+        let* { context; _ } = AState.get in
         let record_map = record |> List.to_seq |> ID_Map.of_seq in
-        let record_pp = record_map |> ID_Map.map (fun _ -> pp) 
+        let* () = record
+          |> Lists.traverse_ (fun (lbl, id) ->
+            let* aset = lookup context id in
+            register_type_flow (project_pp_of pp lbl) aset *>
+            register_data_flow (project_pp_of pp lbl) id
+          )
         in
-        Original, ARec {
+        let record_pp = record_map |> ID_Map.map (fun _ -> pp) 
+        in aset_of @@ ARec {
+          name      = pp;
           fields_id = record_map;
           fields_pp = record_pp;
-          pp_envs = ID_Map.singleton pp context;
+          pp_envs   = ID_Map.singleton pp context;
         }
 
   (**
     Evaluate a given {!type-Layout.Ast.operator} expression.
   *)
-  let [@warning "-8"] eval_op o : aset AState.t =
+  let [@warning "-8"] eval_op pp o : aset AState.t =
     match o with
     | OPlus (i1, i2) ->
-        let$* _, AInt r1 = lookup' i1 in
-        let$* _, AInt r2 = lookup' i2 in
+        let$* AInt r1 = lookup' i1 in
+        let$* AInt r2 = lookup' i2 in
         begin match r1, r2 with
-        | a, `Z | `Z, a -> original @@ AInt a
-        | `P, `P        -> original @@ AInt `P
-        | `N, `N        -> original @@ AInt `N
-        | _ -> original' [AInt `N; AInt `Z; AInt `P]
+        | a, `Z | `Z, a -> aset_of @@ AInt a
+        | `P, `P        -> aset_of @@ AInt `P
+        | `N, `N        -> aset_of @@ AInt `N
+        | _ -> aset_of_list [AInt `N; AInt `Z; AInt `P]
         end
 
     | OMinus (i1, i2) ->
-        let$* _, AInt r1 = lookup' i1 in
-        let$* _, AInt r2 = lookup' i2 in
+        let$* AInt r1 = lookup' i1 in
+        let$* AInt r2 = lookup' i2 in
         begin match r1, r2 with
-        | a, `Z | `Z, a -> original @@ AInt a
-        | `P, `N        -> original @@ AInt `P
-        | `N, `P        -> original @@ AInt `N
-        | _ -> original' [AInt `N; AInt `Z; AInt `P]
+        | a, `Z | `Z, a -> aset_of @@ AInt a
+        | `P, `N        -> aset_of @@ AInt `P
+        | `N, `P        -> aset_of @@ AInt `N
+        | _ -> aset_of_list [AInt `N; AInt `Z; AInt `P]
         end
 
     | OTimes (i1, i2) ->
-        let$* _, AInt r1 = lookup' i1 in
-        let$* _, AInt r2 = lookup' i2 in
+        let$* AInt r1 = lookup' i1 in
+        let$* AInt r2 = lookup' i2 in
         begin match r1, r2 with
-        | _, `Z   | `Z, _   -> original @@ AInt `Z
-        | `P, `N  | `N, `P  -> original @@ AInt `N
-        | _ -> original @@ AInt `P
+        | _, `Z   | `Z, _   -> aset_of @@ AInt `Z
+        | `P, `N  | `N, `P  -> aset_of @@ AInt `N
+        | _ -> aset_of @@ AInt `P
         end
 
     | OLess (i1, i2) ->
-        let$* _, AInt r1 = lookup' i1 in
-        let$* _, AInt r2 = lookup' i2 in
+        let$* AInt r1 = lookup' i1 in
+        let$* AInt r2 = lookup' i2 in
         begin match r1, r2 with
-        | `N, `Z | `N, `P | `Z, `P          -> original @@ ABool `T
-        | `Z, `N | `P, `N | `P, `Z | `Z, `Z -> original @@ ABool `F
-        | _ -> original' [ABool `T; ABool `F]
+        | `N, `Z | `N, `P | `Z, `P          -> aset_of @@ ABool `T
+        | `Z, `N | `P, `N | `P, `Z | `Z, `Z -> aset_of @@ ABool `F
+        | _ -> aset_of_list [ABool `T; ABool `F]
         end
 
     | OEquals (i1, i2) ->
-        let$* _, AInt r1 = lookup' i1 in
-        let$* _, AInt r2 = lookup' i2 in
+        let$* AInt r1 = lookup' i1 in
+        let$* AInt r2 = lookup' i2 in
         begin match r1, r2 with
-        | `Z, `Z -> original @@ ABool `T
+        | `Z, `Z -> aset_of @@ ABool `T
         | `N, `P | `P, `N
         | `Z, `P | `P, `Z
-        | `Z, `N | `N, `Z -> original @@ ABool `F
-        | _ -> original' [ABool `T; ABool `F]
+        | `Z, `N | `N, `Z -> aset_of @@ ABool `F
+        | _ -> aset_of_list [ABool `T; ABool `F]
+        end
+
+    | ONeg i1 ->
+        let$* AInt r1 = lookup' i1 in
+        begin match r1 with
+        | `N -> aset_of (AInt `P)
+        | `Z -> aset_of (AInt `Z)
+        | `P -> aset_of (AInt `N)
         end
 
     | OAnd (i1, i2) ->
-        let$* _, ABool r1 = lookup' i1 in
-        let$* _, ABool r2 = lookup' i2 in
+        let$* ABool r1 = lookup' i1 in
+        let$* ABool r2 = lookup' i2 in
         begin match r1, r2 with
-        | `T, r -> original @@ ABool  r
-        | `F, _ -> original @@ ABool `F
+        | `T, r -> aset_of @@ ABool  r
+        | `F, _ -> aset_of @@ ABool `F
         end
 
     | OOr (i1, i2) ->
-        let$* _, ABool r1 = lookup' i1 in
-        let$* _, ABool r2 = lookup' i2 in
+        let$* ABool r1 = lookup' i1 in
+        let$* ABool r2 = lookup' i2 in
         begin match r1, r2 with
-        | `F, r -> original @@ ABool  r
-        | `T, _ -> original @@ ABool `T
+        | `F, r -> aset_of @@ ABool  r
+        | `T, _ -> aset_of @@ ABool `T
         end
 
     | ONot (i1)  ->
-        let$* _, ABool r1 = lookup' i1 in
+        let$* ABool r1 = lookup' i1 in
         begin match r1 with
-        | `T -> original @@ ABool `F
-        | `F -> original @@ ABool `T
+        | `T -> aset_of @@ ABool `F
+        | `F -> aset_of @@ ABool `T
         end
 
     | OAppend (id1, id2) ->
-        let$* _, ARec r1 = lookup' id1 in
-        let$* _, ARec r2 = lookup' id2 in
+        let$* ARec r1 = lookup' id1 in
+        let$* ARec r2 = lookup' id2 in
         let merge m1 m2 = ID_Map.union (fun _ _ v2 -> Some(v2)) m1 m2 in
-        original @@ ARec {
-          fields_id = merge r1.fields_id r2.fields_id;
-          fields_pp = merge r1.fields_pp r2.fields_pp;
-          pp_envs   = merge r1.pp_envs   r2.pp_envs;  
+        let fields_named_id = ID_Map.merge
+          (fun _ v1 v2 -> match v1, v2 with
+          | _, Some v2 -> Some (r2.name, v2)
+          | Some v1, _ -> Some (r1.name, v1)
+          | _ -> None
+          ) r1.fields_id r2.fields_id
+        in
+        let fields_id = ID_Map.map snd fields_named_id  in
+        let fields_pp = merge r1.fields_pp r2.fields_pp in
+        let pp_envs   = merge r1.pp_envs   r2.pp_envs   in
+        let* () =
+          fields_named_id 
+          |> ID_Map.mapi (fun lbl (name, id) ->
+              let lbl_pp  = ID_Map.find lbl fields_pp in
+              let lbl_env = ID_Map.find lbl_pp pp_envs in
+              let* aset = lookup lbl_env id in
+              register_type_flow (project_pp_of name lbl) aset *>
+              register_type_flow (project_pp_of pp lbl) aset *>
+              register_data_flow (project_pp_of pp lbl) (project_pp_of name lbl) 
+          )
+          |> ID_Map.sequence_
+        in
+        aset_of @@ ARec {
+          name = pp; fields_id; fields_pp; pp_envs;
         }
 
   (**
     Evaluate a {{!Layout.Ast.body.BProj} projection} expression.
   *)
-  let [@warning "-8"] eval_proj id lbl : aset AState.t =
-    let$* (_, ARec _) as av = lookup' id in
-    project_field lbl av
+  let [@warning "-8"] eval_proj pp id lbl : aset AState.t =  
+    let$* ARec arec as av = lookup' id in
+    let* aset = project_field lbl av in
+    let project_pp = project_pp_of arec.name lbl in
+    register_data_flow pp project_pp *>
+    register_type_flow project_pp aset $>
+    aset
+
     
 
   (**
@@ -849,9 +930,9 @@ module FlowTracking = struct
   *)
   let rec eval_apply pp id1 id2 =
     begin [@warning "-8"]
-      let$* _, AFun (ctx, id, expr) = lookup' id1 in
+      let$* AFun (ctx, id, expr) = lookup' id1 in
       let*  arg = lookup' id2 in
-      call_closure ctx pp id arg
+      call_closure ctx pp id id2 arg
         (eval_f expr)
     end
 
@@ -860,13 +941,13 @@ module FlowTracking = struct
   *)
   and eval_body pp =
     function
-    | BVar id -> lookup' id
-    | BVal v -> Avalue_Set.singleton <$> eval_value pp v
-    | BOpr o -> eval_op o
-    | BProj (id, lbl) -> eval_proj id lbl
+    | BVar id  -> register_data_flow pp id *> lookup' id
+    | BVal v   -> eval_value pp v
+    | BOpr o   -> eval_op pp o
+    | BProj (id, lbl)   -> eval_proj pp id lbl
     | BApply (id1, id2) -> eval_apply pp id1 id2
     
-    | BInput -> original' @@ [AInt `N; AInt `Z; AInt `P]
+    | BInput -> aset_of_list [AInt `N; AInt `Z; AInt `P]
 
     | BMatch (id, branches) ->
         let* v1 = lookup' id in
@@ -874,13 +955,18 @@ module FlowTracking = struct
         let branches = tys 
           |> Type_Set.to_seq
           |> Seq.filter_map (fun ty ->
-            branches
-              |> List.find_opt (fun (pat, _) -> is_subtype_simple ty pat) 
+            branches |> List.find_opt (fun (pat, _) -> is_subtype_simple ty pat) 
           )
           |> List.of_seq
           |> List.sort_uniq compare (* TODO: make sure `compare` makes sense... I think so though *)
         in
-        let+ results = branches |> Lists.traverse (fun (_, expr) -> eval_f expr) in
+        let+ results =
+          branches 
+          |> Lists.traverse (fun (_, expr) -> 
+              let* final_pp, aset = eval_f expr in
+              register_data_flow pp final_pp $> aset
+          )
+        in
         List.fold_left
           Avalue_Set.union
           Avalue_Set.empty 
@@ -889,16 +975,15 @@ module FlowTracking = struct
   (**
     Evaluate an {{!Layout.Ast.expr} expression}.
   *)
-  and eval_f (expr : Ast.expr) =
+  and eval_f (expr : Ast.expr) : (label * aset) AState.t =
     match expr with
     | [] -> raise Empty_Expression
-    | Cl (id, body) :: cls ->
-    let* body_value  = eval_body id body in
-    let* () = register_flow id body_value in 
-    let body_value' = retag_aset (Source id) body_value in
-    let* () = add_to_env' id body_value' in 
+    | Cl (pp, body) :: cls ->
+    let* body_value = eval_body pp body in
+    let* () = register_type_flow pp body_value in
+    let* () = add_to_env' pp body_value in 
     match cls with
-    | [] -> AState.pure body_value'
+    | [] -> AState.pure (pp, body_value)
     | _  -> eval_f cls
 
   (**
@@ -907,7 +992,7 @@ module FlowTracking = struct
     (Including calling {!Matching.find_required_depths}).
   *)
   let eval ?(k=0) field_depths expr =
-    eval_f expr {
+    (snd <$> eval_f expr) {
       sensitivity  = k;
       inlining = 0;
       field_depths;
@@ -956,7 +1041,7 @@ module Typing = struct
   *)
   let assign_unique_type_ids (type_flow : Type_Set.t ID_Map.t) =
     let initial = {
-      next_tid = 4;
+      next_tid = 5;
       next_uid = 1;
 
       type_to_id  = Type_Map.of_seq (List.to_seq [
@@ -964,6 +1049,7 @@ module Typing = struct
         (TInt,   1);
         (TTrue,  2);
         (TFalse, 3);
+        (TFun,   4);
       ]);
       
       id_to_type  = Int_Map.of_seq (List.to_seq [
@@ -971,6 +1057,7 @@ module Typing = struct
         (1, TInt);
         (2, TTrue);
         (3, TFalse);
+        (4, TFun);
       ]);
 
       union_to_id = Int_Set_Map.singleton Int_Set.empty 0;
@@ -1244,16 +1331,17 @@ module Tagging = struct
     let* tag_maps = i1_tags |> traverse (fun t1 ->
       let* ty1 = type_of_tag t1 in
       match ty1 with
-      | TRec ty1 ->
+      | TRec (_, ty1) ->
       let ty1' = ty1 |> List.to_seq |> ID_Map.of_seq in
 
       i2_tags |> traverse (fun t2 ->
         let+ ty2 = type_of_tag t2 in
         match ty2 with
-        | TRec ty2 ->
+        | TRec (_, ty2) ->
         let ty2' = ty2 |> List.to_seq |> ID_Map.of_seq in
         
         let ty' = TRec (
+          Some pp,
           ID_Map.union (fun _ _ t2 -> Some(t2)) ty1' ty2'
           |> ID_Map.bindings
         ) in
@@ -1305,7 +1393,7 @@ module Tagging = struct
           ID_Map.bindings record |> traverse (fun (lbl, tag) ->
             let+ ty = type_of_tag tag in (lbl, ty)) 
         in
-        let t_ix = find_retagging ~default:(-1) pp_types (TRec rty) in
+        let t_ix = find_retagging ~default:(-1) pp_types (TRec (Some pp, rty)) in
         if t_ix != -1 then
           Field_Tags_Map.singleton record (List.nth pp_tags t_ix)
         else
@@ -1368,6 +1456,7 @@ end
 *)
 type full_analysis =
   {
+    pp_to_body     : Ast.body ID_Map.t;         (** Convenience mapping from pp to Ast.body *)
     flow           : FlowTracking.interp_state; (** Data dependencies. *)
     results        : FlowTracking.aset;         (** Abstract Interpreter Output. *)
     log            : FlowTracking.log_t;        (** Debug log. *)
@@ -1382,12 +1471,14 @@ type full_analysis =
   returning the collection of results.
 *)
 let full_analysis_of ?(k=0) expr =
+  let pp_to_body = Clauses.pp_to_body expr in
   let field_depths = Matching.find_required_depths expr in
   let closures = Closures.get_closure_info expr in
   let (flow, log, results) = FlowTracking.eval ~k field_depths expr in
   let inferred_types = Typing.assign_program_point_types flow.data_flow flow.type_flow in
   let tag_tables = Tagging.compute_tag_tables inferred_types expr in
   {
+    pp_to_body;
     flow;
     log;
     results;

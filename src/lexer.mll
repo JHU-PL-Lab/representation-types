@@ -46,15 +46,18 @@ rule read =
   | ident {
       match lexeme lexbuf with
       | "and"   -> KW_AND
+      | "else"  -> KW_ELSE
       | "end"   -> KW_END
       | "false" -> KW_FALSE
       | "fun"   -> KW_FUN
+      | "if"    -> KW_IF
       | "in"    -> KW_IN
       | "int"   -> KW_INT
       | "let"   -> KW_LET
       | "match" -> KW_MATCH
       | "not"   -> KW_NOT
       | "or"    -> KW_OR
+      | "then"  -> KW_THEN
       | "true"  -> KW_TRUE
       | "with"  -> KW_WITH
       | "input" -> KW_INPUT

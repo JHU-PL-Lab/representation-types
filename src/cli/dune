@@ -3,16 +3,21 @@
    (name lti)
    (modules lti)
    (libraries layout stdio)
-   (modes native))
+   (modes byte native))
 
 (executable
    (name lcc)
    (modules lcc)
    (libraries layout stdio)
-   (modes native))
+   (modes byte native))
 
 
 (env
+
+    (debug
+        (flags (:standard -w -23-33-38-39-66 -rectypes))
+        (ocamlopt_flags (:standard -g -afl-instrument)))
+
     (dev
         (flags (:standard))
         (ocamlopt_flags 

@@ -1,0 +1,16 @@
+
+let make = fun n ->
+  match n == 0 with
+  | true  -> { hd = n; tl = false }
+  | false -> { hd = n; tl = make (n - 1) }
+  end
+in
+
+let sum = fun r ->
+  match r with
+  | { hd: int; tl: * } -> r.hd + sum r.tl
+  | * -> 0
+  end
+in
+
+sum (make 10) + sum (make 20)

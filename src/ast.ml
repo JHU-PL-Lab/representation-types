@@ -25,23 +25,26 @@ type operator =
   | OTimes  of ident * ident (** Integer Multiplication. *)
   | OLess   of ident * ident (** Integer Ordering. *)
   | OEquals of ident * ident (** Integer Equality. *)
+  | ONeg    of ident         (** Integer Negation. *)
   | OAnd    of ident * ident (** Boolean Conjunction. *)
   | OOr     of ident * ident (** Boolean Disjunction. *)
   | ONot    of ident         (** Boolean Negation. *)
   | OAppend of ident * ident (** Record Append *)
   [@@deriving show { with_path = false }, eq, ord]
 
-let pp_operator' fmt = 
+let pp_operator' fmt =
+  let ff = Format.fprintf in
   function
-  | OPlus   (i1, i2) -> Format.fprintf fmt "%s + %s" i1 i2
-  | OMinus  (i1, i2) -> Format.fprintf fmt "%s - %s" i1 i2
-  | OTimes  (i1, i2) -> Format.fprintf fmt "%s * %s" i1 i2
-  | OLess   (i1, i2) -> Format.fprintf fmt "%s < %s" i1 i2
-  | OEquals (i1, i2) -> Format.fprintf fmt "%s == %s" i1 i2
-  | OAnd    (i1, i2) -> Format.fprintf fmt "%s and %s" i1 i2
-  | OOr     (i1, i2) -> Format.fprintf fmt "%s or %s" i1 i2
-  | ONot    i1       -> Format.fprintf fmt "not %s" i1
-  | OAppend (i1, i2) -> Format.fprintf fmt "%s %@ %s" i1 i2
+  | OPlus   (i1, i2) -> ff fmt "%s + %s" i1 i2
+  | OMinus  (i1, i2) -> ff fmt "%s - %s" i1 i2
+  | OTimes  (i1, i2) -> ff fmt "%s * %s" i1 i2
+  | OLess   (i1, i2) -> ff fmt "%s < %s" i1 i2
+  | OEquals (i1, i2) -> ff fmt "%s == %s" i1 i2
+  | ONeg    i1       -> ff fmt "-%s" i1
+  | OAnd    (i1, i2) -> ff fmt "%s and %s" i1 i2
+  | OOr     (i1, i2) -> ff fmt "%s or %s" i1 i2
+  | ONot    i1       -> ff fmt "not %s" i1
+  | OAppend (i1, i2) -> ff fmt "%s %@ %s" i1 i2
   
 (**
   The type of static values.
@@ -152,6 +155,7 @@ type 'env avalue =
   | ABool of [ `T | `F ]
   | AFun  of 'env * ident * expr
   | ARec  of {
+    name      : ident;
     fields_id : ident ID_Map.t [@polyprinter pp_id_map]; (** The name of the value assigned to each field *)
     fields_pp : ident ID_Map.t [@polyprinter pp_id_map]; (** The program point at which each field originated. *)
     pp_envs   : 'env  ID_Map.t [@polyprinter pp_id_map]; (** The context associated with each program point *)
@@ -173,7 +177,7 @@ type 'rvalue rvalue_spec =
   | RInt  of int
   | RBool of bool
   
-  | RRec  of ('rvalue ID_Map.t [@polyprinter pp_id_map])
+  | RRec  of ident * ('rvalue ID_Map.t [@polyprinter pp_id_map])
   | RFun  of 'rvalue env * ident * expr
   [@@deriving show { with_path = false }, eq, ord]
 
@@ -182,6 +186,7 @@ type 'rvalue rvalue_spec =
 *)
 type rvalue' = rvalue' rvalue_spec
   [@@deriving show { with_path = false }, eq, ord]
+
 
 
 (**
@@ -223,12 +228,13 @@ struct
     |  TTrue, RBool  true
     | TFalse, RBool false
     |   TFun, RFun (_, _, _) -> true
-    | TRec (record), RRec (record') ->
+    | TRec (n1, record), RRec (n2, record') 
+        when Option.is_none n1 || Option.get n1 = n2 ->
         for_all record (fun (lbl, pat') ->
           match ID_Map.find_opt lbl record' with
           | None      -> false
-          | Some(rv') -> matches pat' rv'  
-        )
+          | Some(rv') -> matches pat' rv')
+
     | _ -> false
 
   (**
@@ -242,68 +248,30 @@ struct
     | RInt  _ -> TInt
     | RBool b -> if b then TTrue else TFalse
     | RFun (_, _, _) -> TFun
-    | RRec record ->
-        TRec ( record 
+    | RRec (name, record) ->
+        TRec (Some name, record 
           |> ID_Map.map (type_of ~depth:(depth - 1))
           |> ID_Map.bindings
         )
 
   (**
-    Unwrap the comonadic layers and return
-    an unaugmented {{!Ast.rvalue'} rvalue'} for
-    use in comparison, printing, etc.
+    Pretty-print the rvalue (regardless of the comonadic wrapper).
   *)
-  let unwrap : rvalue -> rvalue' =
-    let rec unwrap_rvalue r =
-      match Wrapper.extract r with
-      | RInt i  -> RInt i
-      | RBool b -> RBool b
-      | RRec record ->
-          RRec (ID_Map.map unwrap_rvalue record)
-      | RFun (env, id, body) ->
-          RFun (unwrap_env env, id, body)
-
-    and unwrap_env env =
-        List.map (fun (id, rval) -> (id, unwrap_rvalue rval)) env
-
-    in unwrap_rvalue
-
-
-  (**
-    Given an {!rvalue}, abstract away its
-    specifics to get an equivalent {!avalue}.
-    This preserves the comonadic wrapper, but it
-    can later be removed with {!AValue.unwrap}.
-
-    This abstract value preserves the environment
-    obtained from closures, and has a constructed environment
-    for each record so that lookups will return the appropriate
-    value within the record.
-  *)
-  (* let rec to_avalue (rv : rvalue) : _ avalue Wrapper.t =
-    rv |> Wrapper.map @@
-    function
-    | RInt i ->
-        if i = 0 then AInt `Z
-        else if i < 0 then AInt `N
-        else AInt `P
-    | RBool b ->
-        if b then ABool `T else ABool `F
-    | RFun (env, id, expr) ->
-        let aenv = env
-          |> List.map (fun (id, rv') -> (id, to_avalue rv')) 
-        in
-        AFun (aenv, id, expr)
-    | RRec record ->
-        let aenv = record
-          |> ID_Map.map to_avalue
-          |> ID_Map.bindings 
-        in
-        let arecord = record
-          |> ID_Map.mapi (fun id _ ->
-              (aenv, id))
-        in
-        ARec arecord *)
+  let rec pp_rvalue'' fmt rv =
+    let ff = Format.fprintf in
+    match Wrapper.extract rv with
+    | RInt  i -> ff fmt "%d" i
+    | RBool b -> ff fmt (if b then "true" else "false")
+    | RFun  _ -> ff fmt "<fun>"
+    | RRec (_, record) ->
+      let record = ID_Map.bindings record in
+      match record with
+      | [] -> ff fmt "{}"
+      | (lbl, hd) :: tl ->
+        ff fmt "{%s = %a" lbl pp_rvalue'' hd;
+        tl |> List.iter (fun (lbl, rv) ->
+          ff fmt "; %s = %a" lbl pp_rvalue'' rv);
+        ff fmt "}"
 
 end
 

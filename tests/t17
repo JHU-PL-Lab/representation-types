@@ -1,0 +1,2 @@
+let void = fun x -> void in
+void 0 1 2 3

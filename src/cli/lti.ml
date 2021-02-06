@@ -11,12 +11,11 @@ let () =
     let full = full_analysis_of ~k prog in 
     full.results
       |> FlowTracking.Avalue_Set.to_seq
-      |> Seq.map FlowTracking.Wrapper.extract
       |> Seq.iter (Format.printf "%a@." (Util_pp.pp_avalue Util_pp.pp_context));
     Format.printf "---------------\n";
     let (_, actual) = TaggedEvaluator.eval prog
         (random_input ~upper_bound:10000) full in
-    Format.printf "%a@." Util_pp.pp_rvalue' actual
+    Format.printf "%a@." TaggedEvaluator.RValue.pp_rvalue'' actual
   with
     | Analysis.Open_Expression   
     | Eval.Open_Expression ->

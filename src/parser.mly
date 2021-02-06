@@ -32,7 +32,7 @@
 %token OP_PLUS OP_MINUS OP_APPEND UNIV_PAT
 
 %token KW_MATCH KW_WITH KW_FUN KW_AND KW_OR KW_NOT
-%token KW_LET KW_IN KW_END KW_INT KW_INPUT
+%token KW_LET KW_IN KW_END KW_INT KW_INPUT KW_IF KW_THEN KW_ELSE
 %token ALTERNATIVE ARROW
 
 %start <Ast.expr> main
@@ -77,9 +77,9 @@ let pattern_type :=
   
 let record_type ==
   | LBRACE; fields = separated_list_trailing(SEMICOLON, record_field_type); RBRACE;
-    { TRec fields }
+    { TRec (None, fields) }
   | LPAREN; fields = separated_list_trailing(SEMICOLON, pattern_type); RPAREN;
-    { TRec (fields |> List.mapi (fun i ty -> ("_" ^ string_of_int i, ty))) }
+    { TRec (None, fields |> List.mapi (fun i ty -> ("_" ^ string_of_int i, ty))) }
 
 
 let record_field_type ==
@@ -91,31 +91,42 @@ let ssa ==
       let* ret_id = fresh "" in
       let* expr = expr in
       let* () = emit @@ Cl (ret_id, expr) in
-      let+ emitted = get |> map (fun s -> s.emitted) in
+      let+ emitted = gets (fun s -> s.emitted) in
         Diff_list.to_list emitted
   }
 
 let clause ==
   | KW_LET; id = binding; GETS; body = expr0; KW_IN; {
-      let* body = body in
       let* id = id in
+      let* body = body in
       emit @@ Cl (id, body)
   }
 
 let expr ==
   | clauses = clause*; body = expr0; {
-    let* _ = sequence clauses in
-      body
+    sequence clauses *> body
   }
 
 let sep_pair(e1, sep, e2) == separated_pair(e1, sep, e2)
 
 let expr0 :=
-  | KW_FUN; arg = IDENTIFIER; ARROW; body = ssa; 
+  | KW_FUN; args = nonempty_list(IDENTIFIER); ARROW; body = ssa; 
     {
-      let* arg' = fresh arg in
-      let+ body = add_to_env arg arg' @@ body in
-      BVal (VFun (arg', body))
+      let arg0, argsN = List.hd args, List.tl args in
+      let setup_args = List.fold_right
+        (fun arg body ->
+          new_block @@
+            let* ret_id = fresh "" in
+            let* arg' = fresh arg in
+            let* body = add_to_env arg arg' body in
+            let* () = emit @@ Cl (ret_id, BVal (VFun (arg', body))) in
+            let+ emitted = gets (fun s -> s.emitted) in
+            Diff_list.to_list emitted)
+        argsN body
+      in
+      let* arg0' = fresh arg0 in
+      let+ body = add_to_env arg0 arg0' @@ setup_args in
+      BVal (VFun (arg0', body))
     }
   | KW_MATCH; disc = expr1; KW_WITH; 
     ALTERNATIVE?; branches = separated_list(ALTERNATIVE, match_branch);
@@ -127,6 +138,16 @@ let expr0 :=
           let+ branch = branch in (ty, branch)
         )
       in BMatch (id, branches)
+    }
+  | KW_IF; cond = expr1; KW_THEN; tru = ssa; KW_ELSE; fal = ssa;
+    {
+      let+ id = emit' cond
+      and+ tru = tru
+      and+ fal = fal
+      in BMatch (id, [
+        (TTrue, tru);
+        (TFalse, fal);
+      ])
     }
   | ~ = expr1; <>
 
@@ -195,9 +216,13 @@ let expr5 :=
     and+ i2 = emit' e2
     in BApply (i1, i2)
   }
+  | OP_MINUS; e1 = expr6; {
+    let+ i1 = emit' e1
+    in BOpr (ONeg i1)
+  }
   | ~ = expr6; <>
 
-let expr6 :=
+let expr6 := 
   | e1 = expr6; PROJ_DOT; field = record_proj_name; {
     let+ i1 = emit' e1
     in BProj (i1, field)

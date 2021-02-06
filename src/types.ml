@@ -33,7 +33,7 @@ type simple_type =
   | TInt 
   | TFun
   | TTrue | TFalse
-  | TRec of (label * simple_type) list
+  | TRec of label option * (label * simple_type) list
   [@@deriving eq, ord]
 
 let rec pp_simple_type fmt =
@@ -43,11 +43,12 @@ let rec pp_simple_type fmt =
   | TFun   -> Format.fprintf fmt "fun"
   | TTrue  -> Format.fprintf fmt "true"
   | TFalse -> Format.fprintf fmt "false"
-  | TRec record ->
+  | TRec (name, record) ->
+      let name = Option.map (fun s -> s ^ " ") name |> Option.value ~default:"" in
       match record with
-      | [] -> Format.fprintf fmt "{}"
+      | [] -> Format.fprintf fmt "%s{}" name
       | (lbl, t1)::tl ->
-        Format.fprintf fmt "{@[@,%s : %a" lbl pp_simple_type t1;
+        Format.fprintf fmt "%s{@[@,%s : %a" name lbl pp_simple_type t1;
         tl |> List.iter (fun (lbl, ty) ->
           Format.fprintf fmt ";@ %s : %a" lbl pp_simple_type ty
         );
@@ -69,7 +70,7 @@ let pp_type_tag fmt (Tag tag) =
 let rec is_non_conflicting_simple (t1 : simple_type) (t2 : simple_type) : bool =
   match t1, t2 with
   | _, TUniv -> true
-  | TRec r1, TRec r2 ->
+  | TRec (_, r1), TRec (_, r2) ->
       let module Set = Set.Make(String) in
       let r1_lbls = r1 |> List.map fst |> Set.of_list in
       let r2_lbls = r2 |> List.map fst |> Set.of_list in
@@ -88,7 +89,7 @@ let rec is_non_conflicting_simple (t1 : simple_type) (t2 : simple_type) : bool =
 let rec is_instance_simple (t1 : simple_type) (t2 : simple_type) : bool =
   match t1, t2 with
   | _, TUniv -> true
-  | TRec r1, TRec r2 ->
+  | TRec (n1, r1), TRec (n2, r2) when n1 = n2 ->
       let r1' = List.fast_sort compare r1 in
       let r2' = List.fast_sort compare r2 in
       for_all2 r1' r2' (fun (l1, t1) (l2, t2) ->
@@ -101,7 +102,7 @@ let rec is_instance_simple (t1 : simple_type) (t2 : simple_type) : bool =
 let rec is_subtype_simple (t1 : simple_type) (t2 : simple_type) : bool =
   match t1, t2 with
   | _, TUniv -> true
-  | TRec r1, TRec r2 ->
+  | TRec (_, r1), TRec (_, r2) ->
       for_all r2 (fun (lbl, elem_2) ->
         match List.assoc_opt lbl r1 with
         | None         -> false
@@ -114,11 +115,11 @@ let rec is_subtype_simple (t1 : simple_type) (t2 : simple_type) : bool =
   
 let rec canonicalize_simple (base : simple_type) : simple_type =
   match base with
-  | TRec record ->
+  | TRec (name, record) ->
       let record' = record
         |> List.map (fun (lbl, elem_base) ->
             (lbl, canonicalize_simple elem_base)) 
       in
-      TRec (List.sort compare record')
+      TRec (name, List.sort compare record')
 
   | other -> other

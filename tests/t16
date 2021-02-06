@@ -1,0 +1,6 @@
+let f = fun x acc ->
+  match x == 0 with
+  | true -> acc
+  | false -> f (x - 1) (acc + x)
+  end
+in f 10 0

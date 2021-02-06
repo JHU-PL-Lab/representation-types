@@ -120,7 +120,7 @@ module TaggedEvaluator = struct
     | RBool true     -> State.pure TTrue
     | RBool false    -> State.pure TFalse
     | RFun (_, _, _) -> State.pure TFun
-    | RRec record ->
+    | RRec (name, record) ->
         let* { field_depths; _ } = State.asks (fun s -> s.analysis) in
         let+ record' = record
           |> ID_Map.bindings
@@ -130,7 +130,7 @@ module TaggedEvaluator = struct
               (lbl, ty)
           ) 
         in
-          TRec ( record' )
+          TRec (Some name, record')
 
   
   (**
@@ -141,15 +141,6 @@ module TaggedEvaluator = struct
   let type_tag_of ty : type_tag State.t =
     let+ { type_to_id; _ } = State.asks (fun s -> s.analysis.inferred_types) in
     Tag (Type_Map.find ty type_to_id)
-
-    (* let pp_uid  = ID_Map.find pp pp_to_union_id in
-    let pp_tids = Int_Map.find pp_uid id_to_union |> Int_Set.elements in
-    let pp_tys  = pp_tids |> List.map (fun tid -> Int_Map.find tid id_to_type) in
-    let pp_uid, pp_ty =
-      pp_tys |> List.mapi (fun i t -> (i, t))
-             |> List.find (fun (_, t) -> Types.is_instance_simple t ty)
-    in Tag { t_id = pp_tid; u_id = pp_uid; }
-     *)
 
   (**
     Assign the correct tag to an (untagged) {!rvalue}
@@ -222,7 +213,9 @@ module TaggedEvaluator = struct
     
     | VFun (id, expr) ->
       let* env = State.gets (fun s -> s.env) in
-      tagged TFun @@ RFun (env, id, expr)
+      let+ tfun = type_tag_of TFun in
+      let rec rval = (tfun, RFun ((pp, rval) :: env, id, expr)) in
+      rval
 
     | VRec record ->
       let* record' =
@@ -235,13 +228,13 @@ module TaggedEvaluator = struct
         |> ID_Map.find pp
         |> Field_Tags_Map.find field_tags
       in
-      (tag, RRec record')
+      (tag, RRec (pp, record'))
 
   (**
     Evaluate a particular record {{!Ast.body.BProj} projection}.
   *)
   let [@warning "-8"] eval_proj id lbl =
-    let$+ (_, RRec record) = lookup id in
+    let$+ (_, RRec (_, record)) = lookup id in
     match ID_Map.find_opt lbl record with
     | None     -> raise Type_Mismatch
     | Some(v)  -> v
@@ -278,6 +271,10 @@ module TaggedEvaluator = struct
       let r3 = (r1 = r2) in
       tagged' r3 @@ RBool r3
 
+    | ONeg i1 ->
+      let$* (_, RInt r1) = lookup i1 in
+      tagged TInt @@ RInt (-r1)
+
     | OAnd (i1, i2) ->
       let$* (_, RBool r1) = lookup i1 in
       let$* (_, RBool r2) = lookup i2 in
@@ -296,14 +293,14 @@ module TaggedEvaluator = struct
       tagged' r2 @@ RBool r2
 
     | OAppend (i1, i2) ->
-      let$* (t1, RRec r1) = lookup i1 in
-      let$* (t2, RRec r2) = lookup i2 in
+      let$* (t1, RRec (_, r1)) = lookup i1 in
+      let$* (t2, RRec (_, r2)) = lookup i2 in
       let+ { append_tables; _ } = State.asks (fun s -> s.analysis.tag_tables) in
       let tag = append_tables
         |> ID_Map.find pp
         |> Type_Tag_Pair_Map.find (t1, t2)
-      in tag, RRec 
-        (ID_Map.union (fun _ _ rv2 -> Some(rv2)) r1 r2)
+      in tag, RRec
+        (pp, ID_Map.union (fun _ _ rv2 -> Some(rv2)) r1 r2)
 
   (**
     Evaluate a single {!Ast.clause} in the expression.
@@ -374,9 +371,9 @@ module TaggedEvaluator = struct
     this sets up and unwraps the {!State} monad and
     the tags in the resulting rvalue.
   *)
-  let eval expr input analysis : eval_state * Ast.rvalue' =
+  let eval expr input analysis =
     let (s, _, a) = eval_t expr { analysis } { env = []; input }
-    in (s, RValue.unwrap a)
+    in (s, a)
 
 end
 

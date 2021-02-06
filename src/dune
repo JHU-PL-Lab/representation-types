@@ -24,6 +24,10 @@
          ppx_inline_test)))
 
 (env
+   (debug
+      (flags (:standard -w -23-33-38-39-66 -rectypes))
+      (ocamlopt_flags (:standard -g -afl-instrument)))
+
    (dev 
       (flags (:standard -w -23-33-38-39-66 -rectypes))
       (ocamlopt_flags (:standard -O3 -afl-instrument)))

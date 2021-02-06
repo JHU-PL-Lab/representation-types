@@ -125,6 +125,19 @@ let t7 = parse "
   sum (make 10) + sum (make 20)
 "
 
+let t7' = parse "
+    let make = fun n ->
+      if n == 0 then {} else { hd = n; tl = make (n - 1) }
+    in
+    let sum = fun l ->
+      match l with
+      | { hd: int; tl: * } -> l.hd + sum l.tl
+      | {} -> 0
+      end
+    in
+    sum (make 10) + sum (make 20)
+"
+
 (* 8 : test for match pattern depth calculation *)
 let t8 = parse "
   match {} with
