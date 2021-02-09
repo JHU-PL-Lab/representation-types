@@ -78,12 +78,28 @@ let pattern_type :=
 let record_type ==
   | LBRACE; fields = separated_list_trailing(SEMICOLON, record_field_type); RBRACE;
     { TRec (None, fields) }
-  | LPAREN; fields = separated_list_trailing(SEMICOLON, pattern_type); RPAREN;
-    { TRec (None, fields |> List.mapi (fun i ty -> ("_" ^ string_of_int i, ty))) }
-
+  | LPAREN; fields = separated_list_trailing(SEMICOLON, tuple_field_type); RPAREN;
+    { 
+      TRec (None, snd @@ 
+        List.fold_left
+          begin fun (ct, list) field -> match field with
+          | `Ordered ty -> (ct + 1, ("_" ^ string_of_int ct, ty) :: list)
+          | `Tagged pair -> (ct, pair :: list)
+          end
+        (0, [])
+        fields)
+    }
 
 let record_field_type ==
   separated_pair(IDENTIFIER, COLON, pattern_type)
+
+let tuple_field_type ==
+  | ~ = pattern_type; {  
+    `Ordered pattern_type
+  }
+  | PROJ_DOT; tag_name = IDENTIFIER; { 
+    `Tagged (tag_name, TRec (None, [])) 
+  }
 
 let ssa ==
   | ~ = expr; {
@@ -245,17 +261,38 @@ let record_literal :=
       let+ fields = sequence fields in
       VRec fields
     } 
-  | LPAREN; exprs = separated_list_trailing1(SEMICOLON, expr); RPAREN;
+  | LPAREN; exprs = separated_list_trailing1(SEMICOLON, tuple_field_literal); RPAREN;
     {
-      let+ exprs = traverse emit' exprs in
-      VRec (exprs |> List.mapi (fun i expr -> ("_" ^ string_of_int i, expr)))
+      let+ exprs = sequence exprs in
+      VRec (snd @@ 
+        List.fold_left
+          begin fun (ct, list) field -> match field with
+          | `Ordered expr -> (ct + 1, ("_" ^ string_of_int ct, expr) :: list)
+          | `Tagged pair -> (ct, pair :: list)
+          end
+        (0, [])
+        exprs)
     }
 
 let record_proj_name ==
   | field = IDENTIFIER; { field }
   | field = INTEGER;    { "_" ^ string_of_int field }
 
+let tuple_field_literal ==
+  | ~ = expr; { 
+    let+ id = emit' expr 
+    in `Ordered id 
+  }
+  | PROJ_DOT; tag_name = IDENTIFIER; { 
+    let+ id = emit' @@ pure (BVal (VRec []))
+    in `Tagged (tag_name, id) 
+  }
+
 let record_field_literal ==
+  | PROJ_DOT; tag_name = IDENTIFIER; {
+    let+ id = emit' @@ pure (BVal (VRec []))
+    in (tag_name, id)
+  }
   | field = IDENTIFIER; GETS; expr = expr; {
     let+ id = emit' expr
     in (field, id)

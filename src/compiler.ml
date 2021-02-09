@@ -565,7 +565,10 @@ module C = struct
             let* id_place = get_place info id in
             let* size = size_of_union id_u in
             if size <= 8 then
-              emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr (place_field lbl place) fmt_place_ptr id_place fmt_union id_uid]
+              if size != 0 then
+                emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr (place_field lbl place) fmt_place_ptr id_place fmt_union id_uid]
+              else
+                State.pure ()
             else
               emit [sf "%a = HEAP_VALUE(%a, %a);" 
                 fmt_place_loc (place_field lbl place) fmt_union id_uid fmt_place_loc id_place]
@@ -632,7 +635,7 @@ module C = struct
     | BInput ->
         let* int = tid_of TInt in
         let* set_tag = tag_setter_exn int pp dest in
-        set_tag *> emit [sf "_input(%a);" fmt_place_ptr (place_type int dest)]
+        set_tag *> emit [sf "__input(%a);" fmt_place_ptr (place_type int dest)]
 
     | BApply (i1, i2) ->
         let* fn = tid_of TFun in
@@ -653,7 +656,10 @@ module C = struct
 
         let emit_proj src =
           if pp_u_size <= 8 then
-            emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr dest fmt_place_ptr src fmt_union pp_uid]
+            if pp_u_size != 0 then
+              emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr dest fmt_place_ptr src fmt_union pp_uid]
+            else
+              State.pure ()
           else
             emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr dest fmt_place_loc src fmt_union pp_uid]
         in

@@ -19,7 +19,7 @@ let parse s =
 
 
 let test_eval_tagged ?(input = random_input ~upper_bound:10000) expr =
-  let analysis = full_analysis_of ~k:0 expr in
+  let analysis = full_analysis_of ~k:1 expr in
   try ignore (TaggedEvaluator.eval expr input analysis); true with
   | Interpreters_Out_Of_Step -> false
 
