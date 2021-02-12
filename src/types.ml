@@ -30,7 +30,7 @@ type label = string
 
 type simple_type =
   | TUniv 
-  | TInt 
+  | TInt
   | TFun
   | TTrue | TFalse
   | TRec of label option * (label * simple_type) list
@@ -65,8 +65,13 @@ type type_tag =
 let pp_type_tag fmt (Tag tag) =
   Format.fprintf fmt "#%a"
     pp_type_id tag
-
   
+let rec erase_type_names : simple_type -> simple_type =
+  function
+  | TRec (_, r1) -> 
+      TRec (None, r1 |> List.map (fun (f, ty) -> (f, erase_type_names ty)))
+  | other -> other
+
 let rec is_non_conflicting_simple (t1 : simple_type) (t2 : simple_type) : bool =
   match t1, t2 with
   | _, TUniv -> true
@@ -86,14 +91,14 @@ let rec is_non_conflicting_simple (t1 : simple_type) (t2 : simple_type) : bool =
   | _others -> false
 
 
-let rec is_instance_simple (t1 : simple_type) (t2 : simple_type) : bool =
+let rec is_instance_simple ?(check_names = true) (t1 : simple_type) (t2 : simple_type) : bool =
   match t1, t2 with
   | _, TUniv -> true
-  | TRec (n1, r1), TRec (n2, r2) when n1 = n2 ->
+  | TRec (n1, r1), TRec (n2, r2) when not check_names || n1 = n2 ->
       let r1' = List.fast_sort compare r1 in
       let r2' = List.fast_sort compare r2 in
       for_all2 r1' r2' (fun (l1, t1) (l2, t2) ->
-        l1 = l2 && is_instance_simple t1 t2)
+        l1 = l2 && is_instance_simple ~check_names t1 t2)
 
   | t1, t2 when t1 = t2 -> true
   | _others -> false

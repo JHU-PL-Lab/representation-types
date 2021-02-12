@@ -27,12 +27,12 @@
 %token EOF
 
 %token LBRACE RBRACE LPAREN RPAREN SEMICOLON COLON
-%token LTHAN EQUALS PROJ_DOT GETS
+%token LTHAN GTHAN EQUALS LEQUAL GEQUAL PROJ_DOT GETS
 
-%token OP_PLUS OP_MINUS OP_APPEND UNIV_PAT
+%token OP_PLUS OP_MINUS OP_DIVIDE OP_APPEND UNIV_PAT
 
-%token KW_MATCH KW_WITH KW_FUN KW_AND KW_OR KW_NOT
-%token KW_LET KW_IN KW_END KW_INT KW_INPUT KW_IF KW_THEN KW_ELSE
+%token KW_MATCH KW_WITH KW_FUN KW_AND KW_OR KW_NOT KW_MOD
+%token KW_LET KW_IN KW_END KW_INT KW_INPUT KW_IF KW_THEN KW_ELSE KW_RANDOM
 %token ALTERNATIVE ARROW
 
 %start <Ast.expr> main
@@ -91,7 +91,8 @@ let record_type ==
     }
 
 let record_field_type ==
-  separated_pair(IDENTIFIER, COLON, pattern_type)
+  | pair = separated_pair(IDENTIFIER, COLON, pattern_type); { pair }
+  | PROJ_DOT; tag_name = IDENTIFIER; { (tag_name, TRec (None, [])) }
 
 let tuple_field_type ==
   | ~ = pattern_type; {  
@@ -189,6 +190,27 @@ let expr2 :=
     and+ i2 = emit' e2
     in BOpr (OLess (i1, i2))
   }
+  | (e1, e2) = sep_pair(expr3, GTHAN, expr3); {
+    let* i1 = emit' e1 in
+    let* i2 = emit' e2 in
+    let* il = emit_pure' @@ BOpr (OLess (i1, i2)) in
+    let* ie = emit_pure' @@ BOpr (OEquals (i1, i2)) in
+    let+ io = emit_pure' @@ BOpr (OOr (il, ie)) in
+    BOpr (ONot io)
+  }
+  | (e1, e2) = sep_pair(expr3, LEQUAL, expr3); {
+    let* i1 = emit' e1 in
+    let* i2 = emit' e2 in
+    let* il = emit_pure' @@ BOpr (OLess (i1, i2)) in
+    let+ ie = emit_pure' @@ BOpr (OEquals (i1, i2)) in
+    BOpr (OOr (il, ie))
+  }
+  | (e1, e2) = sep_pair(expr3, GEQUAL, expr3); {
+    let* i1 = emit' e1 in
+    let* i2 = emit' e2 in
+    let+ il = emit_pure' @@ BOpr (OLess (i1, i2)) in
+    BOpr (ONot il)
+  }
   | (e1, e2) = sep_pair(expr3, EQUALS, expr3); {
     let+ i1 = emit' e1
     and+ i2 = emit' e2
@@ -220,6 +242,16 @@ let expr4 :=
     and+ i2 = emit' e2
     in BOpr (OTimes (i1, i2))
   }
+  | (e1, e2) = sep_pair(expr4, OP_DIVIDE, expr5); {
+    let+ i1 = emit' e1
+    and+ i2 = emit' e2
+    in BOpr (ODivide (i1, i2))  
+  }
+  | (e1, e2) = sep_pair(expr4, KW_MOD, expr5); {
+    let+ i1 = emit' e1
+    and+ i2 = emit' e2
+    in BOpr (OModulo (i1, i2))  
+  }
   | KW_NOT; e1 = expr5; {
     let+ i1 = emit' e1
     in BOpr (ONot i1)
@@ -245,6 +277,7 @@ let expr6 :=
   }
   | LPAREN; ~ = expr; RPAREN; <>
   | KW_INPUT;      { pure BInput }
+  | KW_RANDOM;     { pure BRandom }
   | lit = literal; { let+ lit = lit in BVal lit }
   | id = ident;    { let+ id =  id  in BVar id }
 
@@ -284,13 +317,13 @@ let tuple_field_literal ==
     in `Ordered id 
   }
   | PROJ_DOT; tag_name = IDENTIFIER; { 
-    let+ id = emit' @@ pure (BVal (VRec []))
+    let+ id = emit_pure' @@ BVal (VRec [])
     in `Tagged (tag_name, id) 
   }
 
 let record_field_literal ==
   | PROJ_DOT; tag_name = IDENTIFIER; {
-    let+ id = emit' @@ pure (BVal (VRec []))
+    let+ id = emit_pure' @@ BVal (VRec [])
     in (tag_name, id)
   }
   | field = IDENTIFIER; GETS; expr = expr; {

@@ -4,6 +4,7 @@ open Analysis
 open Eval
 
 let () =
+  Random.self_init ();
   let text = Stdio.In_channel.input_all Stdio.stdin in
   let k = try int_of_string Sys.argv.(1) with _ -> 0 in
   try
@@ -13,8 +14,7 @@ let () =
       |> FlowTracking.Avalue_Set.to_seq
       |> Seq.iter (Format.printf "%a@." (Util_pp.pp_avalue Util_pp.pp_context));
     Format.printf "---------------\n";
-    let (_, actual) = TaggedEvaluator.eval prog
-        (random_input ~upper_bound:10000) full in
+    let (_, actual) = TaggedEvaluator.eval prog increasing_input full in
     Format.printf "%a@." TaggedEvaluator.RValue.pp_rvalue'' actual
   with
     | Analysis.Open_Expression   

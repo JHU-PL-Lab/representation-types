@@ -1,0 +1,19 @@
+
+let make = fun n ->
+    if n == 0 then
+        {.Nil}
+    else
+        (.Cons; n; make (n - 1))
+in
+
+let reverse = fun l ->
+    let transfer = fun l1 l2 ->
+        match l1 with
+        | (.Cons; *; * ) -> transfer l1.1 (.Cons; l1.0; l2)
+        | {.Nil}         -> l2
+        end
+    in
+    transfer l {.Nil}
+in
+
+reverse (make input)

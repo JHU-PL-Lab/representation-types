@@ -830,6 +830,18 @@ module FlowTracking = struct
         | `P, `N  | `N, `P  -> aset_of @@ AInt `N
         | _ -> aset_of @@ AInt `P
         end
+        
+    | ODivide (i1, i2) ->
+        let$* AInt r1 = lookup' i1 in
+        let$* AInt r2 = lookup' i2 in
+        begin match r1, r2 with
+        | `Z, _  -> aset_of @@ AInt `Z
+        | _, `Z  -> AState.pure Avalue_Set.empty
+        | `P, `N  | `N, `P  
+          -> aset_of_list [AInt `N; AInt `Z]
+        | _ 
+          -> aset_of_list [AInt `P; AInt `Z] 
+        end
 
     | OLess (i1, i2) ->
         let$* AInt r1 = lookup' i1 in
@@ -849,6 +861,16 @@ module FlowTracking = struct
         | `Z, `P | `P, `Z
         | `Z, `N | `N, `Z -> aset_of @@ ABool `F
         | _ -> aset_of_list [ABool `T; ABool `F]
+        end
+
+    | OModulo (i1, i2) ->
+        let$* AInt r1 = lookup' i1 in
+        let$* AInt r2 = lookup' i2 in
+        begin match r1, r2 with
+        | `Z, _  -> aset_of @@ AInt `Z
+        | _, `Z  -> AState.pure Avalue_Set.empty
+        | `N, _  -> aset_of_list [AInt `N; AInt `Z]
+        | `P, _  -> aset_of_list [AInt `P; AInt `Z]
         end
 
     | ONeg i1 ->
@@ -947,7 +969,8 @@ module FlowTracking = struct
     | BProj (id, lbl)   -> eval_proj pp id lbl
     | BApply (id1, id2) -> eval_apply pp id1 id2
     
-    | BInput -> aset_of_list [AInt `N; AInt `Z; AInt `P]
+    | BInput  -> aset_of_list [AInt `N; AInt `Z; AInt `P]
+    | BRandom -> aset_of_list [AInt `Z; AInt `P]
 
     | BMatch (id, branches) ->
         let* v1 = lookup' id in
@@ -1281,9 +1304,8 @@ module Tagging = struct
     Finds the first index within a union type
     which the given simple type is an instance of.
   *)
-  let find_retagging tys ty =
-    first_where is_instance_simple tys ty
-
+  let find_retagging ?check_names tys ty =
+    first_where (is_instance_simple ?check_names) tys ty
 
   (**
     Traverse each of the clauses in the expression
@@ -1391,9 +1413,10 @@ module Tagging = struct
       records |> traverse @@ fun record ->
         let+ rty =
           ID_Map.bindings record |> traverse (fun (lbl, tag) ->
-            let+ ty = type_of_tag tag in (lbl, ty)) 
+            let+ ty = type_of_tag tag in (lbl, erase_type_names ty)) 
         in
-        let t_ix = find_retagging ~default:(-1) pp_types (TRec (Some pp, rty)) in
+        let t_ix = find_retagging ~default:(-1) 
+          pp_types (TRec (Some pp, rty)) in
         if t_ix != -1 then
           Field_Tags_Map.singleton record (List.nth pp_tags t_ix)
         else

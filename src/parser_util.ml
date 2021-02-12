@@ -86,6 +86,9 @@ include struct
     let* () = emit @@ Cl (id, body) in
     pure id
     
+  let emit_pure' body =
+    emit' (pure body)
+
   let new_block act =
     control
       (fun ps -> { ps with

@@ -1,0 +1,11 @@
+let ns = (10; 20; 30; 40) in
+let m  = input in
+match
+    (m < ns.0; m < ns.1; m < ns.2; m < ns.3)
+with
+| ( true; *; *; * ) -> 10
+| ( *; true; *; * ) -> 20
+| ( *; *; true; * ) -> 30
+| ( *; *; *; true ) -> 40
+| * -> m + 1
+end

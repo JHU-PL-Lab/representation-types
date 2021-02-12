@@ -15,6 +15,8 @@ let random_input ~upper_bound : int Seq.t =
 let repeated_input i : int Seq.t =
   let rec inf () = Seq.Cons (i, inf) in inf
 
+let increasing_input : int Seq.t =
+  Seq.unfold (fun i -> Some (i, i+1)) 1
 
 (**
   Exceptions which may be thrown during interpretation.
@@ -258,7 +260,17 @@ module TaggedEvaluator = struct
       let$* (_, RInt r1) = lookup i1 in
       let$* (_, RInt r2) = lookup i2 in
       tagged TInt @@ RInt (r1 * r2)
-  
+
+    | ODivide (i1, i2) ->
+      let$* (_, RInt r1) = lookup i1 in
+      let$* (_, RInt r2) = lookup i2 in
+      tagged TInt @@ RInt (r1 / r2)
+
+    | OModulo (i1, i2) ->
+      let$* (_, RInt r1) = lookup i1 in
+      let$* (_, RInt r2) = lookup i2 in
+      tagged TInt @@ RInt (r1 mod r2)
+
     | OLess (i1, i2) ->
       let$* (_, RInt r1) = lookup i1 in
       let$* (_, RInt r2) = lookup i2 in
@@ -313,7 +325,9 @@ module TaggedEvaluator = struct
     | BProj (id, lbl)   -> eval_proj id lbl
     | BApply (id1, id2) -> eval_apply id1 id2
     | BMatch (id, branches) -> eval_match pp id branches
-    | BInput -> get_input
+    | BInput  -> get_input
+    | BRandom -> 
+        tagged TInt @@ RInt (Random.int 65536)
 
   (**
     Evaluate a function {{!Ast.body.BApply} application}.

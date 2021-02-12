@@ -14,7 +14,7 @@ let space = [' ' '\t' '\r' '\n']+
 
 let letter = ['a'-'z' 'A'-'Z']
 
-let ident = letter (letter | digit | '_' )* '\''*
+let ident = (letter | '_') (letter | digit | '_')* '\''*
 
 rule read =
   parse
@@ -27,41 +27,47 @@ rule read =
   }
 
   | "(*"  { read_comment 0 lexbuf }
-  | '*' { UNIV_PAT }
-  | '.' { PROJ_DOT }
+  | '*'  { UNIV_PAT }
+  | '.'  { PROJ_DOT }
   | "==" { EQUALS }
-  | '=' { GETS }
-  | '<' { LTHAN  }
-  | '(' { LPAREN }
-  | ')' { RPAREN }
-  | '{' { LBRACE }
-  | '}' { RBRACE }
-  | ';' { SEMICOLON }
-  | ':' { COLON }
-  | '|' { ALTERNATIVE }
+  | '='  { GETS }
+  | '<'  { LTHAN  }
+  | '>'  { GTHAN  }
+  | "<=" { LEQUAL }
+  | ">=" { GEQUAL }
+  | '('  { LPAREN }
+  | ')'  { RPAREN }
+  | '{'  { LBRACE }
+  | '}'  { RBRACE }
+  | ';'  { SEMICOLON }
+  | ':'  { COLON }
+  | '|'  { ALTERNATIVE }
   | "->" { ARROW }
-  | '+' { OP_PLUS }
-  | '-' { OP_MINUS }
-  | '@' { OP_APPEND }
+  | '+'  { OP_PLUS }
+  | '-'  { OP_MINUS }
+  | '/'  { OP_DIVIDE }
+  | '@'  { OP_APPEND }
   | ident {
       match lexeme lexbuf with
-      | "and"   -> KW_AND
-      | "else"  -> KW_ELSE
-      | "end"   -> KW_END
-      | "false" -> KW_FALSE
-      | "fun"   -> KW_FUN
-      | "if"    -> KW_IF
-      | "in"    -> KW_IN
-      | "int"   -> KW_INT
-      | "let"   -> KW_LET
-      | "match" -> KW_MATCH
-      | "not"   -> KW_NOT
-      | "or"    -> KW_OR
-      | "then"  -> KW_THEN
-      | "true"  -> KW_TRUE
-      | "with"  -> KW_WITH
-      | "input" -> KW_INPUT
-      | other   -> IDENTIFIER(other)
+      | "and"    -> KW_AND
+      | "else"   -> KW_ELSE
+      | "end"    -> KW_END
+      | "false"  -> KW_FALSE
+      | "fun"    -> KW_FUN
+      | "if"     -> KW_IF
+      | "in"     -> KW_IN
+      | "input"  -> KW_INPUT
+      | "random" -> KW_RANDOM
+      | "int"    -> KW_INT
+      | "let"    -> KW_LET
+      | "match"  -> KW_MATCH
+      | "mod"    -> KW_MOD
+      | "not"    -> KW_NOT
+      | "or"     -> KW_OR
+      | "then"   -> KW_THEN
+      | "true"   -> KW_TRUE
+      | "with"   -> KW_WITH
+      | other    -> IDENTIFIER(other)
     }
   | _ { raise Error }
 

@@ -23,9 +23,11 @@ type operator =
   | OPlus   of ident * ident (** Integer Addition. *)
   | OMinus  of ident * ident (** Integer Subtraction. *)
   | OTimes  of ident * ident (** Integer Multiplication. *)
+  | ODivide of ident * ident (** Integer Division. *)
   | OLess   of ident * ident (** Integer Ordering. *)
-  | OEquals of ident * ident (** Integer Equality. *)
   | ONeg    of ident         (** Integer Negation. *)
+  | OEquals of ident * ident (** Integer Equality. *)
+  | OModulo of ident * ident (** Integer Modulus.  *)
   | OAnd    of ident * ident (** Boolean Conjunction. *)
   | OOr     of ident * ident (** Boolean Disjunction. *)
   | ONot    of ident         (** Boolean Negation. *)
@@ -38,9 +40,11 @@ let pp_operator' fmt =
   | OPlus   (i1, i2) -> ff fmt "%s + %s" i1 i2
   | OMinus  (i1, i2) -> ff fmt "%s - %s" i1 i2
   | OTimes  (i1, i2) -> ff fmt "%s * %s" i1 i2
+  | ODivide (i1, i2) -> ff fmt "%s / %s" i1 i2
   | OLess   (i1, i2) -> ff fmt "%s < %s" i1 i2
+  | ONeg    i1       -> ff fmt "- %s" i1
   | OEquals (i1, i2) -> ff fmt "%s == %s" i1 i2
-  | ONeg    i1       -> ff fmt "-%s" i1
+  | OModulo (i1, i2) -> ff fmt "%s mod %s" i1 i2
   | OAnd    (i1, i2) -> ff fmt "%s and %s" i1 i2
   | OOr     (i1, i2) -> ff fmt "%s or %s" i1 i2
   | ONot    i1       -> ff fmt "not %s" i1
@@ -50,7 +54,7 @@ let pp_operator' fmt =
   The type of static values.
 *)
 type value =
-  | VInt of int                  (** Integers. *)
+  | VInt   of int                (** Integers. *)
   | VTrue                        (** Boolean True.*)
   | VFalse                       (** Boolean False. *)
   | VRec of (label * ident) list (** Records. *)
@@ -76,6 +80,7 @@ and body =
   | BApply  of ident * ident  (** Function Application. *)
   | BProj   of ident * label  (** Field Projection. *)
   | BInput                    (** Integer input. *)
+  | BRandom                   (** Integer (non-negative) random value. *)
   | BMatch  of ident * (simple_type * expr) list (** Match Expression. *)
   [@@deriving show { with_path = false }, eq, ord]
 
@@ -112,7 +117,7 @@ type context = ident list
 
 let rec pp_value' fmt =
   function
-  | VInt i -> Format.fprintf fmt "%d" i
+  | VInt   i -> Format.fprintf fmt "%d" i
   | VTrue  -> Format.fprintf fmt "true"
   | VFalse -> Format.fprintf fmt "false"
   | VRec record ->
@@ -136,6 +141,7 @@ and pp_body' fmt =
   | BApply (i1, i2) -> Format.fprintf fmt "%s %s" i1 i2
   | BProj (id, lbl) -> Format.fprintf fmt "%s.%s" id lbl
   | BInput          -> Format.fprintf fmt "input"
+  | BRandom         -> Format.fprintf fmt "random"
   | BMatch (id, _branches) ->
       Format.fprintf fmt "match %s with ..." id
 
@@ -174,11 +180,10 @@ type 'env avalue =
   of extending their structure as need be.
 *)
 type 'rvalue rvalue_spec =
-  | RInt  of int
-  | RBool of bool
-  
-  | RRec  of ident * ('rvalue ID_Map.t [@polyprinter pp_id_map])
-  | RFun  of 'rvalue env * ident * expr
+  | RInt   of int
+  | RBool  of bool
+  | RRec   of ident * ('rvalue ID_Map.t [@polyprinter pp_id_map])
+  | RFun   of 'rvalue env * ident * expr
   [@@deriving show { with_path = false }, eq, ord]
 
 (**
@@ -245,7 +250,7 @@ struct
   let rec type_of ?(depth=(-1)) rv =
     if depth = 0 then TUniv else
     match Wrapper.extract rv with
-    | RInt  _ -> TInt
+    | RInt   _ -> TInt
     | RBool b -> if b then TTrue else TFalse
     | RFun (_, _, _) -> TFun
     | RRec (name, record) ->
@@ -260,9 +265,9 @@ struct
   let rec pp_rvalue'' fmt rv =
     let ff = Format.fprintf in
     match Wrapper.extract rv with
-    | RInt  i -> ff fmt "%d" i
-    | RBool b -> ff fmt (if b then "true" else "false")
-    | RFun  _ -> ff fmt "<fun>"
+    | RInt   i -> ff fmt "%d" i
+    | RBool  b -> ff fmt (if b then "true" else "false")
+    | RFun   _ -> ff fmt "<fun>"
     | RRec (_, record) ->
       let record = ID_Map.bindings record in
       match record with

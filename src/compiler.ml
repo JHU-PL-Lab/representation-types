@@ -250,18 +250,23 @@ module C = struct
     function
     | TInt  -> State.pure "ssize_t"
     | TUniv -> State.pure "Univ"
-    | TFun  -> State.pure "Closure*"
+    | TFun  -> State.pure "const Closure*"
     | TTrue | TFalse -> State.pure "Empty"
     | TRec (name, ts) ->
         let name = Option.get name in
-        let+ lbl_uids = ts 
+        let+ lbl_uinfo = ts 
           |> Lists.traverse (fun (lbl, _) ->
-            let+ uid = uid_of (name ^ "." ^ lbl) in (lbl, uid))
+            let* u, uid = union_of (name ^ "." ^ lbl) in 
+            let+ u_size = size_of_union u in
+            (lbl, uid, u_size))
         in
-        lbl_uids |> sf "struct /* %s */ {@.%a}" 
+        lbl_uinfo |> sf "struct /* %s */ {@.%a}" 
           name
-          (fun fmt ts -> ts |> List.iter (fun (lbl, uid) ->
-            ff fmt "  Univ %s; /* %a */@." lbl fmt_union uid
+          (fun fmt ts -> ts |> List.iter (fun (lbl, uid, usize) ->
+            if usize != 0 then
+              ff fmt "  Univ  %s; /* %a */@." lbl fmt_union uid
+            else
+              ff fmt "  Empty %s; /* %a */@." lbl fmt_union uid 
           ))
 
   let emit_type_decls =
@@ -637,6 +642,11 @@ module C = struct
         let* set_tag = tag_setter_exn int pp dest in
         set_tag *> emit [sf "__input(%a);" fmt_place_ptr (place_type int dest)]
 
+    | BRandom ->
+        let* int = tid_of TInt in
+        let* set_tag = tag_setter_exn int pp dest in
+        set_tag *> emit [sf "%a = rand();" fmt_place_loc (place_type int dest)]
+
     | BApply (i1, i2) ->
         let* fn = tid_of TFun in
         let* i1 = get_place info i1 in
@@ -673,14 +683,9 @@ module C = struct
             begin match ID_Map.find_opt rec_field_pp inferred_types.pp_to_union_id with
             | Some rf_uid when rf_uid = pp_uid ->
               Some (
-                (* 
-                  (* The below seems unnecessary, as we are already copying the union as a whole. *)
-                  (* Note that this would be invalidated if we did not necessarily back-propagate unions... *)
-                  (* This is why the rf_uid identity check is in place above, as a reminder. *)
-                let* field_tid = tid_of field_ty in
-                let* set_tag = tag_setter field_tid pp dest in
-                Option.value set_tag ~default:(State.pure ()) *> 
-                *)
+                (* Checking a tag is unnecessary, as we are already copying the union as a whole. *)
+                (* Note that this would be invalidated if we did not necessarily back-propagate unions... *)
+                (* This is why the rf_uid identity check is in place above, as a reminder. *)
                 emit_proj (place_field lbl (place_type tid id_place))
               )
             | _ -> None  
@@ -747,15 +752,22 @@ module C = struct
           indent (emit ["ABORT;"])
         end
 
-    | BOpr ((OPlus (i1, i2) | OMinus (i1, i2) | OTimes (i1, i2)) as o) ->
+    | BOpr 
+      ((OPlus   (i1, i2) 
+      | OMinus  (i1, i2) 
+      | OTimes  (i1, i2)
+      | ODivide (i1, i2)
+      | OModulo (i1, i2)) as o) ->
         let* int = tid_of TInt in
         let* i1_place = get_place info i1 >>= assert_place_type i1 int in
         let* i2_place = get_place info i2 >>= assert_place_type i2 int in
         let* set_tag = tag_setter_exn int pp dest in
         let[@warning "-8"] op = match o with 
-          | OPlus  (_, _) -> "+"
-          | OMinus (_, _) -> "-"
-          | OTimes (_, _) -> "*"
+          | OPlus   (_, _) -> "+"
+          | OMinus  (_, _) -> "-"
+          | OTimes  (_, _) -> "*"
+          | ODivide (_, _) -> "/"
+          | OModulo (_, _) -> "%"
         in
         set_tag *> 
         emit [sf "%a = %a %s %a;" fmt_place_loc (place_type int dest) fmt_place_loc i1_place op fmt_place_loc i2_place] 
@@ -922,6 +934,9 @@ module C = struct
       ["int main(void) {"] ["}\n"]
     begin
       emit [
+        "time_t t;";
+        "srand((unsigned) time(&t));";
+        
         sf "%a result;" fmt_union uid;
         sf "___main(NULL, &result);";
         sf "fprint_%a(stdout, &result);" fmt_union uid;
