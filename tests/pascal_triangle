@@ -1,0 +1,11 @@
+let getNumber = fun row -> fun col ->
+    if col == 0 then
+        1
+    else if col == row then
+        1
+    else if row == 0 then
+        1
+    else
+        getNumber row-1 col-1 + getNumber row-1 col
+in
+let x = getNumber 10000 5000

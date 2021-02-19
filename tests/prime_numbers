@@ -1,0 +1,36 @@
+let mod = fun a -> fun b ->
+    if a < b then
+        a
+    else
+        a - b*(a/b)
+in
+
+let isPrimeForOdd = fun x -> fun index -> fun max
+    if index > max then
+        false
+    else 
+        if mod x index == 0
+            false
+    true
+in
+
+let getNextPrimeNumber = fun n -> fun prime -> fun count ->
+    prime = prime + 2
+    if isPrimeForOdd prime 3 prime/2 then
+        count = count + 1
+    if count < n then
+        getNextPrimeNumber n prime count
+    else
+        prime
+in
+
+let getNthPrimeNumber = fun n ->
+    count = 1
+    prime = 2
+    if n > count then
+        getNextPrimeNumber n prime count
+    else
+        prime
+in
+
+getNthPrimeNumber 1000000
