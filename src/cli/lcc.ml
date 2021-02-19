@@ -3,12 +3,19 @@ open Layout
 open Analysis
 open Eval
 
+let k = ref 0
+
 let () =
-  let text = Stdio.In_channel.input_all Stdio.stdin in
-  let k = try int_of_string Sys.argv.(1) with _ -> 0 in
+  Arg.parse [
+    "-k",    Arg.Set_int k,       "Context sensitivity for analysis.";
+    (* "--box", Arg.Set boxing_mode, "Change calling convention to use more pointers."; *)
+  ] 
+  print_endline
+  "C transpiler for layout types.";
   try
+    let text = Stdio.In_channel.input_all Stdio.stdin in
     let prog = Tests.parse text in
-    let analysis = full_analysis_of ~k prog in 
+    let analysis = full_analysis_of ~k:(!k) prog in 
     print_string @@ Compiler.C.compile_string ~analysis prog  
   with
     | Compiler.Open_Expression

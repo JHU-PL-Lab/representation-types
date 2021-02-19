@@ -19,6 +19,7 @@ let c_prelude =
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <time.h>
 
 typedef void Func();
 
@@ -26,12 +27,14 @@ typedef struct {
   Func *_func;
 } Closure;
 
+#define UNREACHABLE __builtin_unreachable()
 #define ABORT exit(EXIT_FAILURE)
 #define COPY(...) __builtin_memcpy(__VA_ARGS__)
 #define COMBINE(a, b) (a) >= (b) ? (a) * (a) + (a) + (b) : (a) + (b) * (b)
 #define CALL(c, ...) ((c)->_func)((c), __VA_ARGS__)
+#define HEAP_ALLOC(...) malloc(__VA_ARGS__)
 #define HEAP_VALUE(type, ...) \
-  ({ type *ptr = malloc(sizeof(type)); *ptr = (type) __VA_ARGS__; (void*)ptr; })
+  ({ type *ptr = HEAP_ALLOC(sizeof(type)); *ptr = (type) __VA_ARGS__; (void*)ptr; })
 #define UNTAGGED(U, T, value) ((U) { . T = value })
 #define TAGGED(U, T, value) ((U) { .tag = U ## _ ## T, . T = value })
 
@@ -46,8 +49,13 @@ typedef void *Univ;
 
 module C = struct
 
+  type convention =
+    [ `Stack of int | `Heap ]
+
   type compile_state =
     {
+      union_conventions: convention Int_Map.t;
+
       deferred: string Diff_list.t Diff_list.t;
       counter: int;
     }
@@ -126,8 +134,6 @@ module C = struct
   let type_prefix  = "Type"
   let union_prefix = "Union"
 
-  let argument_style = `Value
-
   let fmt_type fmt id =
     ff fmt "%s%d" type_prefix id
   let fmt_union fmt id =
@@ -182,70 +188,105 @@ module C = struct
     function
     | `Ptr id | `Loc id -> id
 
-  let place_field lbl =
-    function
-    | `Ptr id -> `Loc (sf "%s->%s" id lbl)
-    | `Loc id -> `Loc (sf "%s.%s" id lbl)
-
-  let place_type tid =
-    place_field (sf "%a" fmt_type tid)
-
-  let get_place (info : Analysis.Closures.closure_info) id =
-    let+ fn = tid_of TFun
-    and+ u, uid = union_of info.name in
-    match ID_Map.find id info.scope with
-    | exception _ -> raise Open_Expression
-    | Self_closure ->
-        let macro = if Int_Set.cardinal u < 2 then "UNTAGGED" else "TAGGED" in
-        `Loc (sf "%s(%a, %a, (const Closure*)_clo)" macro fmt_union uid fmt_type fn)
-          
-    | Captured -> `Loc (sf "_clo->%s" id)
-    | Local    -> `Loc id
-    | Argument -> `Loc id
-    | _ -> failwith "Won't happen."
-
-    
-  let fmt_place_ptr fmt place =
-    Format.pp_print_string fmt (
-      place |> place_to_ptr
-            |> place_to_str)
     
   let fmt_place_loc fmt place =
     Format.pp_print_string fmt (
       place |> place_to_loc
             |> place_to_str)
 
-  let fmt_place_arg fmt place =
-    match argument_style with
-    | `Value     -> fmt_place_loc fmt place
-    | `Reference -> fmt_place_ptr fmt place
 
-
-  
-  let rec size_of_type_repr =
+  let rec size_of_type ?(us = Int_Set.empty) =
     function
-    | TTrue | TFalse -> 0
-    | TInt | TFun | TUniv -> 8
-    | TRec (_, fields) ->
-        List.fold_left
-          (fun acc (_, _ty) ->
-              acc + 8)
-          0
-          fields
-
-  let size_of_union u =
-    match Int_Set.elements u with
-    | []  -> State.pure 0
-    | [x] -> size_of_type_repr <$> type_of_tid x
-    | xs  ->
-      let+ xsizes = xs |>
-        Lists.traverse (fun tid ->
-          size_of_type_repr <$> type_of_tid tid)
+    | TTrue | TFalse      -> State.pure 0
+    | TInt | TFun | TUniv -> State.pure 8
+    | TRec (None, _)      -> failwith "No unnamed record types."
+    | TRec (Some name, fields) ->
+      let+ field_sizes =
+        fields |> Lists.traverse begin fun (field, _) ->
+          let* uid = uid_of (sf "%s.%s" name field) in
+          let+ u_conv = convention_of_union ~us uid in
+          match u_conv with
+          | `Stack n -> n
+          | `Heap    -> 8
+        end
       in
-      8 + List.fold_left max 0 xsizes
+      List.fold_left 
+        (+) 0 field_sizes
+
+  and convention_of_union ?(us = Int_Set.empty) uid =
+    let* { union_conventions; _ } = State.get in
+    let* { inferred_types; _ }    = State.ask in
+    let u = Int_Map.find uid inferred_types.id_to_union in
+    match Int_Map.find_opt uid union_conventions with
+    | Some convention -> State.pure convention
+    | None ->
+    let* conv =
+      if Int_Set.mem uid us then
+        State.pure `Heap
+      else
+      let us = Int_Set.add uid us in
+      begin match Int_Set.elements u with
+      | []  -> State.pure (`Stack 0)
+      | [x] -> 
+        let+ size = type_of_tid x >>= size_of_type ~us in
+        if allow_unboxed_union_size size 
+          then `Stack size
+          else `Heap
+      | xs  ->
+        let+ xsizes = xs 
+          |> Lists.traverse (fun tid -> type_of_tid tid >>= size_of_type ~us)
+        in
+        let size = 8 + List.fold_left max 0 xsizes in
+        if allow_unboxed_union_size size 
+          then `Stack size
+          else `Heap
+      end
+    in
+    State.modify (fun s -> { s with 
+      union_conventions = s.union_conventions 
+        |> Int_Map.add uid conv
+    }) *>
+    State.pure conv
+
+  and allow_unboxed_union_size s =
+    s <= 16
+
+  let size_of_union uid =
+    let+ conv = convention_of_union uid in
+    match conv with
+    | `Stack n -> n
+    | `Heap    -> 8
+  
+
+  let get_place (info : Analysis.Closures.closure_info) id =
+    let* fn = tid_of TFun in
+    let+ self_u, self_uid = union_of info.name in
+    match ID_Map.find id info.scope with
+    | exception _ -> raise Open_Expression
+    | Self_closure ->
+        let macro = if Int_Set.cardinal self_u < 2 then "UNTAGGED" else "TAGGED" in
+        `Loc (sf "%s(%a, %a, (const Closure*)_clo)" macro fmt_union self_uid fmt_type fn)  
+    | Captured -> 
+        `Loc (sf "_clo->%s" id)
+    | Local | Argument -> 
+        `Loc id
+    | _ -> failwith "Won't happen."
 
 
+  let fmt_pp_field pp =
+    let* uid = uid_of pp in
+    let+ conv = convention_of_union uid in
+    match conv with
+    | `Stack _ -> fun fmt field -> ff fmt ".%s" field
+    | `Heap    -> fun fmt field -> ff fmt "->%s" field
+    
 
+  let fmt_pp_type pp =
+    let+ fmt_field = fmt_pp_field pp in
+    fun fmt tid ->
+      fmt_field fmt (sf "%a" fmt_type tid)
+
+    
   let rec type_repr =
     function
     | TInt  -> State.pure "ssize_t"
@@ -256,8 +297,8 @@ module C = struct
         let name = Option.get name in
         let+ lbl_uinfo = ts 
           |> Lists.traverse (fun (lbl, _) ->
-            let* u, uid = union_of (name ^ "." ^ lbl) in 
-            let+ u_size = size_of_union u in
+            let* uid = uid_of (name ^ "." ^ lbl) in 
+            let+ u_size = size_of_union uid in
             (lbl, uid, u_size))
         in
         lbl_uinfo |> sf "struct /* %s */ {@.%a}" 
@@ -284,14 +325,20 @@ module C = struct
     let id_to_union = Int_Map.bindings inferred_types.id_to_union in
     id_to_union
     |> Lists.traverse_ (fun (id, tys) ->
+      let* conv = convention_of_union id in
+      let fmt_conv fmt =
+        match conv with
+        | `Stack _ -> ff fmt " "
+        | `Heap    -> ff fmt " *"
+      in
       if Int_Set.cardinal tys = 0 then
         emit [sf "typedef Empty %a;\n" fmt_union id]
       else if Int_Set.cardinal tys = 1 then
         let tid = Int_Set.choose tys in
-        emit [sf "typedef struct { %a %a; } %a;" fmt_type tid fmt_type tid fmt_union id]
+        emit [sf "typedef struct { %a %a; } %t%a;" fmt_type tid fmt_type tid fmt_conv fmt_union id]
       else 
       bracketed_indented
-        ["typedef struct {"] [sf "} %s%d;\n" union_prefix id]
+        ["typedef struct {"] [sf "} %t%a;\n" fmt_conv fmt_union id]
       begin
         bracketed_indented ["enum {"] ["} tag;"]
         begin
@@ -378,8 +425,8 @@ module C = struct
           match fields with
           | [] -> emit [{|fprintf(stream, "{}");|}]
           | (lbl1, _) :: fs ->
-          let* id1_u, id1_uid = union_of (name ^ "." ^ lbl1) in
-          let* id1_size = size_of_union id1_u in
+          let* id1_uid = uid_of (name ^ "." ^ lbl1) in
+          let* id1_size = size_of_union id1_uid in
           let* () = emit [sf {|fprintf(stream, "{%s = ");|} lbl1] in
           let* () = 
             if id1_size <= 8 then  
@@ -388,8 +435,8 @@ module C = struct
               emit [sf {|fprint_%a(stream, (%a*)value->%s);|} fmt_union id1_uid fmt_union id1_uid lbl1]
           in
           let* () = fs |> Lists.traverse_ @@ fun (lbl, _) ->
-            let* id_u, id_uid = union_of (name ^ "." ^ lbl) in
-            let* id_size = size_of_union id_u in
+            let* id_uid = uid_of (name ^ "." ^ lbl) in
+            let* id_size = size_of_union id_uid in
             let* () = emit [sf {|fprintf(stream, "; %s = ");|} lbl] in
             if id_size <= 8 then
               emit [sf {|fprint_%a(stream, (%a*)&value->%s);|} fmt_union id_uid fmt_union id_uid lbl]
@@ -403,22 +450,24 @@ module C = struct
       inferred_types.id_to_union
       |> Int_Map.bindings
       |> Lists.traverse_ @@ fun (id, u) ->
+        let* conv = convention_of_union id in
+        let value = match conv with `Stack _ -> "value" | `Heap -> "(*value)" in
         bracketed_indented
           [sf "void fprint_%a(FILE *stream, const %a* value) {" fmt_union id fmt_union id] ["}"]
         begin
           if Int_Set.cardinal u = 0 then
-            emit ["__builtin_unreachable();"]
+            emit ["UNREACHABLE;"]
           else if Int_Set.cardinal u = 1 then
             let tid = Int_Set.choose u in
-            emit [sf "fprint_%a(stream, &value->%a);" fmt_type tid fmt_type tid]
+            emit [sf "fprint_%a(stream, &%s->%a);" fmt_type tid value fmt_type tid]
           else
           bracketed_indented
-            ["switch (value->tag) {"] ["}"]
+            [sf "switch (%s->tag) {" value] ["}"]
           begin
             u |> Int_Set.elements |> Lists.traverse_ @@ fun tid ->
               emit [sf "case %a_%a:" fmt_union id fmt_type tid] *>
               indent begin
-                emit [sf "fprint_%a(stream, &value->%a);" fmt_type tid fmt_type tid] *>
+                emit [sf "fprint_%a(stream, &%s->%a);" fmt_type tid value fmt_type tid] *>
                 emit ["break;"]
               end
           end
@@ -431,6 +480,7 @@ module C = struct
     Figure out how to set the tag, if necessary.
   *)
   let tag_setter tid pp place =
+    let* fmt_place_field = fmt_pp_field pp in
     let+ u, uid = union_of pp in
     if not (Int_Set.mem tid u) then
       None
@@ -438,46 +488,58 @@ module C = struct
       Some (State.pure ())
     else
       Some (
-        emit [sf "%a = %a_%a;" fmt_place_loc (place_field "tag" place) fmt_union uid fmt_type tid]
+        emit [sf "%a%a = %a_%a;" fmt_place_loc place fmt_place_field "tag" fmt_union uid fmt_type tid]
       )
 
-  let tag_setter_exn tid pp place =
+  let   tag_setter_exn tid pp place =
     let+ set_tag = tag_setter tid pp place in
     match set_tag with
     | None -> raise Type_Mismatch
     | Some(set_tag) -> set_tag
 
   let assert_place_type pp tid place =
+    let* fmt_place_type  = fmt_pp_type pp  in
+    let* fmt_place_field = fmt_pp_field pp in
     let* u, uid = union_of pp in
     if not (Int_Set.mem tid u) then
       raise Type_Mismatch
     else
-    State.pure (place_type tid place) <*
+    State.pure (`Loc (sf "%a%a" fmt_place_loc place fmt_place_type tid)) <*
     if Int_Set.cardinal u != 1 then
-      emit [sf "if (%a.tag != %a_%a) ABORT;" fmt_place_loc place fmt_union uid fmt_type tid]
+      emit [sf "if (%a%a != %a_%a) ABORT;" fmt_place_loc place fmt_place_field "tag" fmt_union uid fmt_type tid]
     else
       State.pure()
     
   let is_true pp place =
     let* tru = tid_of TTrue in
+    let* fmt_place_field = fmt_pp_field pp in
     let+ u, uid = union_of pp in
     if not (Int_Set.mem tru u) then
       "0"
     else if Int_Set.cardinal u = 1 then
       "1"
     else
-      sf "%a.tag == %a_%a" fmt_place_loc place fmt_union uid fmt_type tru
+      sf "%a%a == %a_%a" fmt_place_loc place fmt_place_field "tag" fmt_union uid fmt_type tru
 
   let is_false pp place =
     let* fal = tid_of TFalse in
+    let* fmt_place_field = fmt_pp_field pp in
     let+ u, uid = union_of pp in
     if not (Int_Set.mem fal u) then
       "0"
     else if Int_Set.cardinal u = 1 then
       "1"
     else
-      sf "%a.tag == %a_%a" fmt_place_loc place fmt_union uid fmt_type fal
+      sf "%a%a == %a_%a" fmt_place_loc place fmt_place_field "tag" fmt_union uid fmt_type fal
 
+
+
+  let alloc_memory_for_pp pp dest =
+    let* pp_uid = uid_of pp in
+    let* conv = convention_of_union pp_uid in
+    match conv with
+    | `Stack _ -> State.pure ()
+    | `Heap    -> emit [sf "%a = HEAP_ALLOC(sizeof(*%a));" fmt_place_loc dest fmt_place_loc dest]
 
 
   let rec emit_clauses (info : Analysis.Closures.closure_info) dest =
@@ -495,12 +557,10 @@ module C = struct
     | Cl (pp, body) as cl :: cls ->
         let* pp_u, pp_uid = union_of pp in
         emit [sf "/* %a */" pp_clause' cl] *>
-        emit [sf "%a %s;" fmt_union pp_uid pp] *>
         begin
-          if Int_Set.cardinal pp_u != 0 then
-            emit_body info pp (`Loc pp) body
-          else
-            State.pure ()
+          if Int_Set.cardinal pp_u == 0 then State.pure () else
+          emit [sf "%a %s;" fmt_union pp_uid pp] *>
+          emit_body info pp (`Loc pp) body
         end *>
         emit [""] *>
         emit_clauses info dest cls
@@ -509,8 +569,9 @@ module C = struct
     let* info = get_closure_info name in
     let* return_uid = uid_of info.return in
     let* func_signature = match info.argument with
-    | None     -> 
-        State.pure [sf "void %a(const %a *_clo, %a *restrict %s) {"
+    | None -> 
+        State.pure 
+        [sf "void %a(const %a *_clo, %a *restrict %s) {"
           fmt_closure_impl name
           fmt_closure_type name 
           fmt_union return_uid 
@@ -521,21 +582,23 @@ module C = struct
           fmt_closure_impl name 
           fmt_closure_type name
           fmt_union return_uid
-          info.return 
-          fmt_union arg_uid arg]
+          info.return
+          fmt_union arg_uid
+          arg]
     in
     bracketed_indented func_signature ["}\n\n"]
-      (emit_clauses info (`Ptr info.return) expr)
+      (emit_clauses info (place_deref (`Ptr info.return)) expr)
 
   and emit_body info pp dest =
     function
     | BVar id ->
         let* id = get_place info id in
-        emit [sf "%a = %a;" fmt_place_loc dest fmt_place_loc id]
+        emit [sf "%a = %a;" fmt_place_loc (place_address dest) fmt_place_loc id]
     
     | BVal (VFun (_, expr)) ->
         let* () = defer @@ emit_closure_defn pp expr in
         let* fn = tid_of TFun in
+        let* fmt_place_type = fmt_pp_type pp in
         let* set_tag = tag_setter_exn fn pp dest in
         let* pp_info = get_closure_info pp in
         let captured = pp_info.scope 
@@ -548,61 +611,69 @@ module C = struct
         set_tag *>
         if List.length captured = 0 then
           emit [sf "static const %a %a$ = { ._func = %a };" fmt_closure_type pp fmt_closure_impl pp fmt_closure_impl pp] *>
-          emit [sf "%a = (Closure*)&%a$;" fmt_place_loc (place_type fn dest) fmt_closure_impl pp]
+          emit [sf "%a%a = (Closure*)&%a$;" fmt_place_loc dest fmt_place_type fn fmt_closure_impl pp]
         else
         bracketed_indented
-          [sf "%a = HEAP_VALUE(%a, {" fmt_place_loc (place_type fn dest) fmt_closure_type pp] ["});"]
+          [sf "%a%a = HEAP_VALUE(%a, {" fmt_place_loc dest fmt_place_type fn fmt_closure_type pp] ["});"]
         begin
           let* () = emit [sf "._func = %a," fmt_closure_impl pp] in
           captured |> Lists.traverse_ (fun (name, src) ->
             let* src = src in
-            emit [sf ".%s = %a," name fmt_place_loc src])
+            emit [sf ".%s = %a," name fmt_place_loc src]
+          )
         end
 
     | BVal (VRec fields) ->
         let* { tag_tables; _ } = State.ask in
         let record_table = ID_Map.find pp tag_tables.record_tables in
-        let* pp_u, _pp_uid = union_of pp in
+        let* fmt_place_type  = fmt_pp_type pp  in
+        let* pp_u, _ = union_of pp in
 
-        let init_fields place =
+        let init_fields tid =
           fields |> Lists.traverse_ (fun (lbl, id) ->
-            let* id_u, id_uid = union_of id in
+            let* id_uid = uid_of id in
             let* id_place = get_place info id in
-            let* size = size_of_union id_u in
+            let* size = size_of_union id_uid in
             if size <= 8 then
               if size != 0 then
-                emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr (place_field lbl place) fmt_place_ptr id_place fmt_union id_uid]
+                emit [sf "COPY(&%a%a.%s, &%a, sizeof(%a));" 
+                  fmt_place_loc dest
+                  fmt_place_type tid lbl 
+                    fmt_place_loc id_place fmt_union id_uid]
               else
                 State.pure ()
             else
-              emit [sf "%a = HEAP_VALUE(%a, %a);" 
-                fmt_place_loc (place_field lbl place) fmt_union id_uid fmt_place_loc id_place]
+              emit [sf "%a%a.%s = HEAP_VALUE(%a, %a);" 
+                fmt_place_loc dest
+                fmt_place_type tid lbl
+                  fmt_union id_uid fmt_place_loc id_place]
           )
         in
         
+        alloc_memory_for_pp pp dest *>
         if Int_Set.cardinal pp_u = 1 then
-          let place = place_type (Int_Set.choose pp_u) dest in
-          init_fields place
+          init_fields (Int_Set.choose pp_u)
         else
         let open Map_Util(struct type t = type_tag [@@deriving ord] end)(Field_Tags_Map) in
         let inverted_fields = invert record_table in
         if Invert_Map.cardinal inverted_fields = 1 then
           let Tag tid, _ = Invert_Map.choose inverted_fields in
           let* set_tag = tag_setter_exn tid pp dest in
-          set_tag *> init_fields (place_type tid dest)
+          set_tag *> init_fields tid
         else
         let rec emit_switches field_tags = 
           function
           | (lbl, id) :: fields ->
               let* id_u, id_uid = union_of id in
               let* id_place = get_place info id in
+              let* fmt_id_place_field = fmt_pp_field pp in
               let type_tags = Int_Set.elements id_u in
               if Int_Set.cardinal id_u = 1 then
                 let field_tags' = ID_Map.add lbl (Tag (Int_Set.choose id_u)) field_tags in
                 emit_switches field_tags' fields
               else
               bracketed_indented
-                [sf "switch (%a.tag) {" fmt_place_loc id_place] ["}"]
+                [sf "switch (%a%a) {" fmt_place_loc id_place fmt_id_place_field "tag"] ["}"]
               begin
                 type_tags |> Lists.traverse_ (fun tid ->
                   let field_tags' = ID_Map.add lbl (Tag tid) field_tags in
@@ -616,7 +687,7 @@ module C = struct
           | None          -> emit ["ABORT;"]
           | Some(Tag tid) -> 
               let* set_tag = tag_setter_exn tid pp dest in
-              set_tag *> init_fields (place_type tid dest) (* **> emit ["break;"] *)
+              set_tag *> init_fields tid
         in
         emit_switches
           ID_Map.empty
@@ -624,54 +695,72 @@ module C = struct
         
     | BVal (VInt i) ->
         let* int = tid_of TInt in
+        let* fmt_place_type = fmt_pp_type pp in
         let* set_tag = tag_setter_exn int pp dest in
-        set_tag *> emit [sf "%a = %d;" fmt_place_loc (place_type int dest) i]
+        alloc_memory_for_pp pp dest *>
+        set_tag *> emit [sf "%a%a = %d;" fmt_place_loc dest fmt_place_type int i]
 
     | BVal VTrue ->
         let* tru = tid_of TTrue in
         let* set_tag = tag_setter_exn tru pp dest in
+        alloc_memory_for_pp pp dest *>
         set_tag
 
     | BVal VFalse ->
         let* fal = tid_of TFalse in
         let* set_tag = tag_setter_exn fal pp dest in
+        alloc_memory_for_pp pp dest *>
         set_tag
         
     | BInput ->
         let* int = tid_of TInt in
+        let* fmt_place_type = fmt_pp_type pp in
         let* set_tag = tag_setter_exn int pp dest in
-        set_tag *> emit [sf "__input(%a);" fmt_place_ptr (place_type int dest)]
+        alloc_memory_for_pp pp dest *>
+        set_tag *> emit [sf "__input(&%a%a);" fmt_place_loc dest fmt_place_type int]
 
     | BRandom ->
         let* int = tid_of TInt in
+        let* fmt_place_type = fmt_pp_type pp in
         let* set_tag = tag_setter_exn int pp dest in
-        set_tag *> emit [sf "%a = rand();" fmt_place_loc (place_type int dest)]
+        alloc_memory_for_pp pp dest *>
+        set_tag *> emit [sf "%a%a = rand();" fmt_place_loc dest fmt_place_type int]
 
     | BApply (i1, i2) ->
         let* fn = tid_of TFun in
-        let* i1 = get_place info i1 in
-        let* i2 = get_place info i2 in
-        emit [sf "CALL(%a, %a, %a);"
-          fmt_place_loc (place_type fn i1)
-          fmt_place_ptr dest 
-          fmt_place_arg i2]
+        let* i1_place = get_place info i1 in
+        let* i2_place = get_place info i2 in
+        let* fmt_i1_place_type = fmt_pp_type i1 in
+        emit [sf "CALL(%a%a, &%a, %a);"
+          fmt_place_loc i1_place fmt_i1_place_type fn
+          fmt_place_loc dest
+          fmt_place_loc i2_place]
     
 
     | BProj (id, lbl) ->
         let* id_u, id_uid = union_of id in
-        let* pp_u, pp_uid = union_of pp in
+        let* pp_uid = uid_of pp in
+        let* fmt_id_place_type = fmt_pp_type id in
+        let* fmt_id_place_field = fmt_pp_field id in
         let* id_place = get_place info id in
+        let* pp_u_size = size_of_union pp_uid in
 
-        let* pp_u_size = size_of_union pp_u in
-
-        let emit_proj src =
+        let emit_proj tid =
           if pp_u_size <= 8 then
             if pp_u_size != 0 then
-              emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr dest fmt_place_ptr src fmt_union pp_uid]
+              emit [sf "COPY(&%a, &%a%a.%s, sizeof(%a));" fmt_place_loc dest 
+                fmt_place_loc id_place
+                fmt_id_place_type tid
+                lbl
+                  fmt_union pp_uid]
             else
               State.pure ()
           else
-            emit [sf "COPY(%a, %a, sizeof(%a));" fmt_place_ptr dest fmt_place_loc src fmt_union pp_uid]
+            emit [sf "COPY(&%a, %a%a.%s, sizeof(%a));" fmt_place_loc dest 
+              fmt_place_loc id_place
+              fmt_id_place_type tid
+              lbl
+                fmt_union pp_uid]
         in
 
         let handle_case_of tid =
@@ -682,16 +771,15 @@ module C = struct
             let rec_field_pp = Printf.sprintf "%s.%s" name lbl in
             begin match ID_Map.find_opt rec_field_pp inferred_types.pp_to_union_id with
             | Some rf_uid when rf_uid = pp_uid ->
-              Some (
-                (* Checking a tag is unnecessary, as we are already copying the union as a whole. *)
-                (* Note that this would be invalidated if we did not necessarily back-propagate unions... *)
-                (* This is why the rf_uid identity check is in place above, as a reminder. *)
-                emit_proj (place_field lbl (place_type tid id_place))
-              )
-            | _ -> None  
+              (* Checking a tag is unnecessary, as we are already copying the union as a whole. *)
+              (* Note that this would be invalidated if we did not necessarily back-propagate unions... *)
+              (* This is why the rf_uid identity check is in place above, as a reminder. *)
+              Some (emit_proj tid)
+            | _ -> 
+              None
             end
           | _ ->
-            None
+            Some (emit ["ABORT;"])
         in
         
         if Int_Set.cardinal id_u = 1 then
@@ -699,13 +787,13 @@ module C = struct
           handle_case_of tid >>= Option.get
         else
         bracketed_indented
-          [sf "switch (%a) {" fmt_place_loc (place_field "tag" id_place)] ["}"]
+          [sf "switch (%a%a) {" fmt_place_loc id_place fmt_id_place_field "tag"] ["}"]
         begin
-          let* () =
+          let* () = 
             Int_Set.elements id_u |> Lists.traverse_ (fun tid ->
               handle_case_of tid >>= function
               | None -> State.pure ()
-              | Some(handle) ->
+              | Some handle ->
               emit [sf "case %a_%a:" fmt_union id_uid fmt_type tid] *>
               indent begin
                 handle *>
@@ -714,14 +802,15 @@ module C = struct
             )
           in
           emit ["default:"] *>
-          indent (emit ["ABORT;"])
+          indent (emit ["UNREACHABLE;"])
         end 
 
 
     | BMatch (i1, branches) ->
         let* { tag_tables; _ } = State.ask in
         let* i1_u, i1_uid = union_of i1 in
-        let* i1 = get_place info i1 in
+        let* i1_place = get_place info i1 in
+        let* fmt_i1_place_field = fmt_pp_field i1 in
         let open Map_Util(Int)(Type_Tag_Map) in
         let tag_to_branch  = ID_Map.find pp tag_tables.match_tables in
         let branch_to_tags = invert tag_to_branch in
@@ -734,7 +823,7 @@ module C = struct
         let module Invert_Maps = Traversable_Util(Maps(Invert_Map)) in
         let module Invert_Maps = Invert_Maps.Make_Traversable(State) in
         bracketed_indented
-          [sf "switch (%a) {" fmt_place_loc (place_field "tag" i1)] ["}"]
+          [sf "switch (%a%a) {" fmt_place_loc i1_place fmt_i1_place_field "tag"] ["}"]
         begin
           let* () = branch_to_tags
             |> Invert_Map.mapi (fun branch_ix tids ->
@@ -761,6 +850,7 @@ module C = struct
         let* int = tid_of TInt in
         let* i1_place = get_place info i1 >>= assert_place_type i1 int in
         let* i2_place = get_place info i2 >>= assert_place_type i2 int in
+        let* fmt_place_type  = fmt_pp_type pp  in
         let* set_tag = tag_setter_exn int pp dest in
         let[@warning "-8"] op = match o with 
           | OPlus   (_, _) -> "+"
@@ -769,8 +859,9 @@ module C = struct
           | ODivide (_, _) -> "/"
           | OModulo (_, _) -> "%"
         in
-        set_tag *> 
-        emit [sf "%a = %a %s %a;" fmt_place_loc (place_type int dest) fmt_place_loc i1_place op fmt_place_loc i2_place] 
+        alloc_memory_for_pp pp dest *>
+        set_tag *>
+        emit [sf "%a%a = %a %s %a;" fmt_place_loc dest fmt_place_type int fmt_place_loc i1_place op fmt_place_loc i2_place] 
 
     | BOpr ((OEquals (i1, i2) | OLess (i1, i2)) as o) ->
         let* int = tid_of TInt in
@@ -792,16 +883,19 @@ module C = struct
           | OEquals (_, _) -> "=="
           | OLess   (_, _) -> "<"
         in
+        alloc_memory_for_pp pp dest *>
         bracketed_indented [sf "if (%a %s %a) {" fmt_place_loc i1_place op fmt_place_loc i2_place] ["}"] t *>
         bracketed_indented ["else {"] ["}"] f
         end
 
     | BOpr (ONeg i1) ->
-      let* int = tid_of TInt in
-      let* i1_place = get_place info i1 >>= assert_place_type i1 int in
-      let* set_tag = tag_setter_exn int pp dest in
-      set_tag *> 
-      emit [sf "%a = -%a;" fmt_place_loc (place_type int dest) fmt_place_loc i1_place]
+        let* int = tid_of TInt in
+        let* fmt_place_type  = fmt_pp_type pp  in
+        let* i1_place = get_place info i1 >>= assert_place_type i1 int in
+        let* set_tag = tag_setter_exn int pp dest in
+        alloc_memory_for_pp pp dest *>
+        set_tag *> 
+        emit [sf "%a%a = -%a;" fmt_place_loc dest fmt_place_type int fmt_place_loc i1_place]
 
     | BOpr ((OAnd (i1, i2) | OOr (i1, i2)) as o) ->
         let* tru = tid_of TTrue in
@@ -809,6 +903,7 @@ module C = struct
         let* set_fal = tag_setter fal pp dest in
         let* set_tru = tag_setter tru pp dest in
 
+        alloc_memory_for_pp pp dest *>
         begin match set_tru, set_fal with
         | None, None -> raise Type_Mismatch
         | Some t, None -> t
@@ -848,6 +943,7 @@ module C = struct
         let* set_fal = tag_setter fal pp dest in
         let* set_tru = tag_setter tru pp dest in
         
+        alloc_memory_for_pp pp dest *>
         begin match set_tru, set_fal with
         | None, None -> raise Type_Mismatch
         | Some t, None -> t
@@ -869,18 +965,25 @@ module C = struct
         let append_table = ID_Map.find pp tag_tables.append_tables in
         
         let* pp_u, _ = union_of pp in
+        let* fmt_place_type = fmt_pp_type pp in
+        
         let* i1_u, i1_uid = union_of i1 in
         let* i1_place = get_place info i1 in
+        let* fmt_i1_place_type = fmt_pp_type i1 in
+        let* fmt_i1_place_field = fmt_pp_field i1 in
+        
         let* i2_u, i2_uid = union_of i2 in
         let* i2_place = get_place info i2 in
-
-        let combined_tags t1 t2 =
+        let* fmt_i2_place_type = fmt_pp_type i2 in
+        let* fmt_i2_place_field = fmt_pp_field i2 in
+        
+        let combined_tags pp1 pp2 fmt =
           if Int_Set.cardinal i1_u = 1 then 
-            t2
+            ff fmt "%t" pp2
           else if Int_Set.cardinal i2_u = 1 then
-            t1
+            ff fmt "%t" pp1
           else
-            sf "COMBINE(%s, %s)" t1 t2
+            ff fmt "COMBINE(%t, %t)" pp1 pp2
         in
 
         let init_from_tids t1 t2 tp =
@@ -892,31 +995,39 @@ module C = struct
           | TRec (_, r1), TRec (_, r2) ->
               let f2 = ID_Set.of_list (List.map fst r2) in
               let f1 = ID_Set.of_list (List.map fst r1) |> (fun f1 -> ID_Set.diff f1 f2) in
-              let init_lbl src lbl =
-                emit [sf "%a = %a;"
-                  fmt_place_loc (place_field lbl (place_type tp dest))
-                  fmt_place_loc (place_field lbl src)]
+              let* () = 
+                f1 |> ID_Set.to_seq |> Seqs.traverse_ begin fun lbl ->
+                  emit [sf "%a%a.%s = %a%a.%s;"
+                    fmt_place_loc dest     fmt_place_type tp    lbl 
+                    fmt_place_loc i1_place fmt_i1_place_type t1 lbl]
+                end
               in
-              let* () = f1 |> ID_Set.to_seq |> Seqs.traverse_ (init_lbl (place_type t1 i1_place)) in
-              f2 |> ID_Set.to_seq |> Seqs.traverse_ (init_lbl (place_type t2 i2_place))
+                f2 |> ID_Set.to_seq |> Seqs.traverse_ begin fun lbl ->
+                  emit [sf "%a%a.%s = %a%a.%s;"
+                    fmt_place_loc dest     fmt_place_type tp    lbl 
+                    fmt_place_loc i2_place fmt_i2_place_type t2 lbl]
+                end
 
           | _ -> raise Type_Mismatch
         in
 
+        alloc_memory_for_pp pp dest *>
         if Int_Set.cardinal i1_u = 1 && Int_Set.cardinal i2_u = 1 then
           init_from_tids (Int_Set.choose i1_u) (Int_Set.choose i2_u) (Int_Set.choose pp_u)
         else
         bracketed_indented
-          [sf "switch (%s) {"
-            (combined_tags (i1_place |> place_field "tag" |> place_to_str)
-                           (i2_place |> place_field "tag" |> place_to_str))]
+          [sf "switch (%t) {"
+              (combined_tags
+                (fun fmt -> ff fmt "%a%a" fmt_place_loc i1_place fmt_i1_place_field "tag")
+                (fun fmt -> ff fmt "%a%a" fmt_place_loc i2_place fmt_i2_place_field "tag"))
+            ]
           ["}"]
         begin
           append_table
           |> Type_Tag_Pair_Map.mapi (fun (Tag t1, Tag t2) (Tag tp) ->
-            let t1s = sf "%a_%a" fmt_union i1_uid fmt_type t1 in
-            let t2s = sf "%a_%a" fmt_union i2_uid fmt_type t2 in
-            emit [sf "case %s:" (combined_tags t1s t2s)] *>
+            let t1s fmt = ff fmt "%a_%a" fmt_union i1_uid fmt_type t1 in
+            let t2s fmt = ff fmt "%a_%a" fmt_union i2_uid fmt_type t2 in
+            emit [sf "case %t:" (combined_tags t1s t2s)] *>
             indent begin
               init_from_tids t1 t2 tp *>
               emit ["break;"]
@@ -960,7 +1071,11 @@ module C = struct
     | Some a -> a
     | None   -> Analysis.full_analysis_of expr
     in
-    let (_, emitted, ()) = compile expr analysis { deferred = Diff_list.nil; counter = 0; } in
+    let (_, emitted, ()) = compile expr analysis {
+      union_conventions = Int_Map.empty;
+      deferred = Diff_list.nil; 
+      counter = 0; 
+    } in
       String.concat "\n" (Diff_list.to_list emitted)
 
 end
