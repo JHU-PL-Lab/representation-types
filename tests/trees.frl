@@ -1,0 +1,98 @@
+
+let empty = {.Empty} in
+
+let blacken = fun tree -> 
+    tree @ {color = {.Black}} 
+in
+
+let balance = fun tree ->
+    match tree with
+    | (* case 1 *) 
+    { L: { color: {.Red}
+         ; R: {color: {.Red}} 
+         }
+    } ->
+        { 
+            color = {.Red};
+            value = tree.L.R.value;
+            L = tree.L @ {
+                color = {.Black};
+                R = tree.L.R.L;
+            };
+            R = tree @ {
+                L = tree.L.R.R;
+            };
+        }
+    | (* case 2 *)
+    { R: { color: {.Red}
+         ; R: {color: {.Red}} 
+         }
+    } ->
+        {    
+            color = {.Red};
+            value = tree.R.value;
+            L = tree @ {
+                R = tree.R.L;
+            };
+            R = blacken tree.R.R;
+        }
+    | (* case 3 *)
+    { R: { color: {.Red}
+         ; L: {color: {.Red}} 
+         }
+    } ->
+        {
+            color = {.Red};
+            value = tree.R.L.value;
+            L = tree @ {
+                R = tree.R.L.L;
+            };
+            R = tree.R @ {
+                color = {.Black};
+                L = tree.R.L.R;
+            };
+        }
+    | (* case 4 *)
+    { L: { color: {.Red}
+        ; L: {color: {.Red}} 
+        }
+    } ->
+        {
+            color = {.Red};
+            value = tree.L.value;
+            L = blacken tree.L.L;
+            R = tree @ {
+                L = tree.L.R;
+            };
+        }
+    | * ->
+        tree
+    end
+in
+
+let insert = fun val tree ->
+    let tree1 = 
+    match tree with
+    | {.Empty} -> { color={.Red}; value=val; L=empty; R=empty }
+    | * ->
+        if val < tree.value then
+            balance (tree @ {L = insert val tree.L})
+        else if val == tree.value then
+            tree
+        else
+            balance (tree @ {R = insert val tree.R})
+    end
+    in 
+        blacken tree1
+in
+
+
+let loop = fun t ->
+    let n = input in
+    if n == 0 then 
+        t
+    else
+        loop (insert n t)
+in
+
+loop empty

@@ -1,10 +1,4 @@
 
-def vec4(val):
-    return (val, val, val, val)
-
-def mat4x4(val):
-    return vec4(vec4(val))
-
 def mat4x4_col(m, i):
     return tuple(v[i] for v in m)
 
@@ -42,7 +36,7 @@ def main():
     m2 = mat4x4_input()
     m3 = mat4x4_input()
 
-    for _ in range(num_reps+1, 0, -1):
+    for _ in range(num_reps):
         det = mat4x4_det(mat4x4_mul(m1, mat4x4_mul(m2, m3)))
         
     print(det)
