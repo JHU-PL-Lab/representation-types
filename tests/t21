@@ -1,0 +1,16 @@
+let vec4 = fun n ->
+    (n; n; n; n)
+in
+
+let mat4x4 = fun n ->
+    vec4 (n; n; n; n)
+in
+
+let mat_sum_diag = fun m ->
+    m.0.0 + m.1.1 + m.2.2 + m.3.3
+in
+
+let x = mat4x4 random in
+let y = mat4x4 random in
+
+mat_sum_diag x + mat_sum_diag y
