@@ -410,7 +410,7 @@ module FlowTracking = struct
 
   (** Convenience alias *)
   type aset = Avalue_Set.t
-  type tset = flow_tag * aset
+  type tset = Type_Set.t
 
   (**
     The type used for our state.
@@ -426,11 +426,13 @@ module FlowTracking = struct
       type_flow    : Type_Set.t ID_Map.t;     (** Runtime type observations *)
 
       (* abstract cache state *)
-      env_cache    : aset ID_Map.t Context_Map.t; (** Map from context to abstract environment *)
+      env_cache    : (tset * aset) ID_Map.t Context_Map.t; (** Map from context to typed abstract environment *)
       env_version  : int Context_Map.t; (** Map from context to monotonically increasing integer, for cache invalidation *)
       
-      pp_cache     : aset ID_Map.t;     (** Map from (memoized) program points to their last result set *)
-      pp_version   : int ID_Map.t;      (** Map from (memoized) program points to the last used env version *)
+      type_cache   : simple_type Type_Map.t; (** Map from record names to shallow-ized record type memo *)
+
+      pp_cache     : (tset * aset) ID_Map.t; (** Map from (memoized) program points to their last result set *)
+      pp_version   : int ID_Map.t; (** Map from (memoized) program points to the last used env version *)
 
       context      : context; (** Holds the current execution context (callsite program point stack)  *)
       version      : int;     (** Holds a number which increments every time we update an environment *)
@@ -488,7 +490,7 @@ module FlowTracking = struct
     function call fails, it will be excluded from the resulting set.
   *)
   let ( let$+ ) v f = 
-    let+ v = v in
+    let+ (_t, v) = v in
     Avalue_Set.filter_map (fun v' -> 
         try Some(f v') with _ -> None) v
 
@@ -499,7 +501,7 @@ module FlowTracking = struct
     it will simply propagate an empty set, and so not include that branch.
   *)
   let ( let$* ) v f =
-    let* v = v in
+    let* (_t, v) = v in
     let+ asets = Avalue_Set.to_seq v
       |> Seqs.traverse (fun v' -> try f v' with _ -> AState.pure Avalue_Set.empty)
     in
@@ -533,62 +535,100 @@ module FlowTracking = struct
   (**
     Look up an aset by name in the environment (with provided context)
   *)
-  let lookup ctx id : aset AState.t =
+  let lookup ctx id : (tset * aset) AState.t =
     let+ { env_cache; _ } = AState.get in
     let env = Option.value (Context_Map.find_opt ctx env_cache) ~default:(ID_Map.empty) in
-      Option.value (ID_Map.find_opt id env) ~default:(Avalue_Set.empty)
+      Option.value (ID_Map.find_opt id env) ~default:(Type_Set.empty, Avalue_Set.empty)
 
   (**
     Look up an aset by name in the environment (with the current default context)
   *)
-  let lookup' id : aset AState.t =
+  let lookup' id : (tset * aset) AState.t =
     let* { context; _ } = AState.get in
     lookup context id
 
-  (**
-    Convenience operator to resolve a record to a particular
-    nondeterministic possibility, mostly to get its type.
-  *)
-  let resolve_record : avalue ->  avalue ID_Map.t list AState.t =
-    function
-    | ARec arec ->
-      let+ map_of_lists = arec.fields_pp
-        |> ID_Map.mapi (fun field field_pp ->
-          let field_ctx = ID_Map.find field_pp arec.pp_envs in
-          let+ field_val = lookup field_ctx field in
-          field_val |> Avalue_Set.to_seq |> List.of_seq)
-        |> ID_Map.sequence
-      in
-      let open! ID_Map.Make_Traversable(Lists) in
-      sequence map_of_lists
+  (* 
+    (**
+      Convenience operator to resolve a record to a particular
+      nondeterministic possibility, mostly to get its type.
+    *)
+    let resolve_record : avalue ->  avalue ID_Map.t list AState.t =
+      function
+      | ARec arec ->
+        let+ map_of_lists = arec.fields_pp
+          |> ID_Map.mapi (fun field field_pp ->
+            let field_ctx = ID_Map.find field_pp arec.pp_envs in
+            let+ (_, field_val) = lookup field_ctx field in
+            field_val |> Avalue_Set.to_seq |> List.of_seq)
+          |> ID_Map.sequence
+        in
+        let open! ID_Map.Make_Traversable(Lists) in
+        sequence map_of_lists
 
-    | _ -> 
-      raise Type_Mismatch
+      | _ -> 
+        raise Type_Mismatch 
+  *)
 
   
   (**
     Convenience operator to project a record field.
   *)
-  let project_field lbl : avalue -> aset AState.t =
+  let project_field lbl : avalue -> (tset * aset) AState.t =
     function
     | ARec arec ->
-        let field_id  = ID_Map.find lbl arec.fields_id in
-        let field_pp  = ID_Map.find lbl arec.fields_pp in
-        let field_ctx = ID_Map.find field_pp arec.pp_envs in
-        lookup field_ctx field_id
+        begin try 
+          let field_id  = ID_Map.find lbl arec.fields_id in
+          let field_pp  = ID_Map.find lbl arec.fields_pp in
+          let field_ctx = ID_Map.find field_pp arec.pp_envs in
+          lookup field_ctx field_id
+        with
+          | Not_found -> AState.pure 
+            (Type_Set.empty, Avalue_Set.empty)
+        end
 
     | _ ->
       raise Type_Mismatch
 
+
+  let rec shallow_type_of ?(remove_names=false) ?(depth=Int.max_int) ty =
+    if depth <= 0 then AState.pure TUniv else
+    match ty with
+    | TRec (name, record) ->
+      let* { field_depths; _ } = AState.ask in
+      let name' = if remove_names then None else name in
+      let+ record' = record 
+        |> Lists.traverse begin fun (field, field_ty) ->
+          let depth' = ID_Map.find field field_depths in
+          let+ ty' = shallow_type_of ~remove_names:true ~depth:(min depth' (depth - 1)) field_ty in
+          (field, ty')
+        end
+      in TRec (name', record')
+    | other ->
+        AState.pure other
+
+  let shallow_type_of ty =
+    match ty with
+    | TRec (_, _) ->
+        let* { type_cache; _ } = AState.get in
+        begin match Type_Map.find_opt ty type_cache with
+        | Some(memoized_type) -> 
+            AState.pure memoized_type
+        | exception _ | None ->
+            let* sty = shallow_type_of ty in
+            AState.modify (fun s -> { s with type_cache = Type_Map.add ty sty s.type_cache }) $>
+            sty
+        end
+
+    | other ->
+        AState.pure other
 
   (**
     The runtime type of the avalue, computed
     only as deeply as is required by the shape depths provided.
     Nondeterministic in the case of records!
   *)
-  let rec type_of ?(remove_names=false) ?(depth=Int.max_int) (av: aset) : Type_Set.t AState.t =
+  let type_of (av: aset) : Type_Set.t AState.t =
     let pure_single ty = AState.pure (Type_Set.singleton ty) in
-    if depth = 0 then pure_single TUniv else
     let avalue_seq = Avalue_Set.to_seq av in
     let+ type_seq = avalue_seq |> Seqs.traverse @@ fun av ->
       match av with
@@ -597,36 +637,38 @@ module FlowTracking = struct
       | AInt _         -> pure_single TInt
       | AFun (_, _, _) -> pure_single TFun
       | ARec arec ->
-          let* { field_depths; _ } = AState.ask in
-          let+ record = arec.fields_pp
-            |> ID_Map.mapi (fun field _ ->
-              let depth' = ID_Map.find field field_depths in
-              let* av' = project_field field av in
-              let+ type_set = type_of ~remove_names:true ~depth:(min depth' (depth - 1)) av' in
-              type_set
+          let* record = arec.fields_pp
+            |> ID_Map.mapi begin fun field _ ->
+              let+ (tys, _) = project_field field av in
+              tys
                 |> Type_Set.to_seq
-                |> List.of_seq (* <- see below *)
-                (* 
+                |> List.of_seq 
+                (* NOTE:
                   I wish I didn't have to do this conversion back to lists,
-                  but unfortunately since they aren't a parametric type
-                  OCaml's Set types can't be Traversable (or else I'd use them instead).
+                  but unfortunately since OCaml's Set types aren't a parametric type
+                  they can't be Traversable (or else I'd use them instead).
                 *)
-              ) 
+            end
             |> ID_Map.sequence
           in
-          let t_name = if remove_names then None else Some(arec.name) in
           let open! ID_Map.Make_Traversable(Lists) in
-          (record
+          let+ record = record
             |> sequence (* gets cartesian product of each field's possible types *)
-            |> List.map (fun id_map ->
+            |> Lists.traverse (fun id_map ->
+              shallow_type_of @@
               canonicalize_simple @@  
-                TRec (t_name, ID_Map.bindings id_map))
-            |> Type_Set.of_list)
+                TRec (Some arec.name, ID_Map.bindings id_map))
+          in
+            record |> Type_Set.of_list
     in
     Seq.fold_left
       Type_Set.union
       Type_Set.empty
       type_seq
+    
+  let with_type aset =
+    let+ tset = type_of aset in
+    (tset, aset)
 
   (**
     Perform any updates to the dependency graph and
@@ -644,14 +686,13 @@ module FlowTracking = struct
         );
     })
 
-  let register_type_flow dest aset : unit AState.t =
-    let* rt = type_of aset in
+  let register_type_flow dest tset : unit AState.t =
     AState.modify (fun s -> {s with 
       type_flow = s.type_flow
         |> ID_Map.update dest
         (function
-        | Some ts -> Some (Type_Set.union rt ts)
-        | None    -> Some rt
+        | Some ts -> Some (Type_Set.union tset ts)
+        | None    -> Some tset
         );
     })
 
@@ -663,40 +704,42 @@ module FlowTracking = struct
 
   let fresh_version : int AState.t =
     let* { version; _ } = AState.get in
+    Format.eprintf "version(%d)@." version;
     let+ () = AState.modify (fun s -> {s with version = version+1}) in
     version
 
-  let add_to_env ctx id aset : unit AState.t =
+  let add_to_env ctx id (tset, aset) : unit AState.t =
     let* { env_cache; env_version; _ } = AState.get in
     match Context_Map.find_opt ctx env_cache with
     | None -> 
-        let* v = fresh_version in
+        let* v = fresh_version   in
         AState.modify (fun s -> { s with 
-          env_cache   = Context_Map.add ctx (ID_Map.singleton id aset) env_cache;
-          env_version = Context_Map.add ctx v env_version;
+          env_cache    = Context_Map.add ctx (ID_Map.singleton id (tset, aset)) env_cache;
+          env_version  = Context_Map.add ctx v env_version;
         })
     | Some(env) ->
     match ID_Map.find_opt id env with
     | None ->
         let* v = fresh_version in
         AState.modify (fun s -> { s with
-          env_cache   = Context_Map.add ctx (ID_Map.add id aset env) env_cache;
+          env_cache   = Context_Map.add ctx (ID_Map.add id (tset, aset) env) env_cache;
           env_version = Context_Map.add ctx v env_version; 
         })
-    | Some(aset') ->
-    let combined = Avalue_Set.union aset aset' in
-    if Avalue_Set.equal combined aset' then
-      AState.pure ()
-    else
+    | Some((tset', aset')) ->
+      if Avalue_Set.subset aset aset' && Type_Set.subset tset tset' then
+        AState.pure ()
+      else
+      let combined_aset = Avalue_Set.union aset aset' in
+      let combined_tset = Type_Set.union tset tset' in
       let* v = fresh_version in
       AState.modify (fun s -> { s with
-        env_cache   = Context_Map.add ctx (ID_Map.add id combined env) env_cache;
+        env_cache   = Context_Map.add ctx (ID_Map.add id (combined_tset, combined_aset) env) env_cache;
         env_version = Context_Map.add ctx v env_version;
       })
 
-  let add_to_env' id aset : unit AState.t =
+  let add_to_env' id (tset, aset) : unit AState.t =
     let* { context; _ } = AState.get in
-    add_to_env context id aset
+    add_to_env context id (tset, aset)
 
 
   let add_all_to_env ctx ctx' : unit AState.t =
@@ -711,31 +754,29 @@ module FlowTracking = struct
     AState.pure ()
 
 
-  let call_closure ctx pp id src aset (ma : (label * aset) AState.t) : aset AState.t =
+  let call_closure ctx pp id src (tset, aset) (ma : (label * tset * aset) AState.t) : (tset * aset) AState.t =
     let* ctx' = prune_context (pp :: ctx) in
     (*
       Merge current environment into new one,
       allowing closure semantics to work.
     *)
     let* () = add_all_to_env ctx ctx' in
-    let* () = add_to_env ctx' id aset in
+    let* () = add_to_env ctx' id (tset, aset) in
     let* { env_version; pp_version; pp_cache; _ } = AState.get in
     let env_v = Context_Map.find ctx' env_version in
     match ID_Map.find_opt pp pp_version with
     | Some(pp_v) when pp_v = env_v ->
       begin  
-        (* Format.eprintf "skip: %s version: %d\n" pp env_v; *)
         AState.pure (
           ID_Map.find_opt pp pp_cache
-          |> Option.value ~default:Avalue_Set.empty
+          |> Option.value ~default:(Type_Set.empty, Avalue_Set.empty)
         ) (* memoize this call *)
       end
     | _ ->
       begin
-        (* Format.eprintf "eval: %s version: %d\n" pp env_v; *)
         let* () = register_data_flow id src in
-        let* () = register_type_flow id aset in
-        let* final_pp, aset = ma |> AState.control
+        let* () = register_type_flow id tset in
+        let* final_pp, tset, aset = ma |> AState.control
           (fun s    -> { s with 
               context    = ctx';
               pp_version = ID_Map.add pp env_v pp_version; 
@@ -748,14 +789,13 @@ module FlowTracking = struct
         let* () = AState.modify (fun s -> { s with
           pp_cache = s.pp_cache |> ID_Map.update pp
             (function
-            | None    -> Some aset
-            | Some a' -> Some (Avalue_Set.union aset a')
+            | None          -> Some (tset, aset)
+            | Some (t', a') -> Some (Type_Set.union tset t', Avalue_Set.union aset a')
             );
         })
         in
         AState.gets 
           (fun s -> ID_Map.find pp s.pp_cache)
-        (* Format.eprintf "result: %s version: %d = %a\n" pp env_v pp_aset aset; *)
       end
 
   let call_closure' pp id src aset ma =
@@ -776,16 +816,15 @@ module FlowTracking = struct
 
     | VFun (id, expr) ->
       let* { context; _ } = AState.get in
-      let* aset = aset_of @@ AFun (context, id, expr) in
-      add_to_env' pp aset $> aset
+      aset_of @@ AFun (context, id, expr)
 
     | VRec record ->
         let* { context; _ } = AState.get in
         let record_map = record |> List.to_seq |> ID_Map.of_seq in
         let* () = record
           |> Lists.traverse_ (fun (lbl, id) ->
-            let* aset = lookup context id in
-            register_type_flow (project_pp_of pp lbl) aset *>
+            let* (tset, _) = lookup context id in
+            register_type_flow (project_pp_of pp lbl) tset *>
             register_data_flow (project_pp_of pp lbl) id
           )
         in
@@ -923,9 +962,9 @@ module FlowTracking = struct
           |> ID_Map.mapi (fun lbl (name, id) ->
               let lbl_pp  = ID_Map.find lbl fields_pp in
               let lbl_env = ID_Map.find lbl_pp pp_envs in
-              let* aset = lookup lbl_env id in
-              register_type_flow (project_pp_of name lbl) aset *>
-              register_type_flow (project_pp_of pp lbl) aset *>
+              let* (tset, _aset) = lookup lbl_env id in
+              register_type_flow (project_pp_of name lbl) tset *>
+              register_type_flow (project_pp_of pp lbl)   tset *>
               register_data_flow (project_pp_of pp lbl) (project_pp_of name lbl) 
           )
           |> ID_Map.sequence_
@@ -937,13 +976,28 @@ module FlowTracking = struct
   (**
     Evaluate a {{!Layout.Ast.body.BProj} projection} expression.
   *)
-  let [@warning "-8"] eval_proj pp id lbl : aset AState.t =  
-    let$* ARec arec as av = lookup' id in
-    let* aset = project_field lbl av in
-    let project_pp = project_pp_of arec.name lbl in
-    register_data_flow pp project_pp *>
-    register_type_flow project_pp aset $>
-    aset
+  let eval_proj pp id lbl : (tset * aset) AState.t =  
+    let* (_, aset) = lookup' id in
+    let+ projections = aset 
+      |> Avalue_Set.to_seq
+      |> Seqs.traverse begin function
+        | ARec arec as av ->
+          let* (tset, aset) = project_field lbl av in
+          let project_pp = project_pp_of arec.name lbl in
+          register_data_flow pp project_pp   *>
+          register_type_flow project_pp tset $>
+          Some((tset, aset))
+        | _ ->
+          AState.pure None
+      end
+    in
+    projections
+    |> Seq.filter_map (fun x -> x)
+    |> Seq.fold_left 
+      (fun (tt, aa) (tset, aset) -> (Type_Set.union tset tt, Avalue_Set.union aset aa))
+      (Type_Set.empty, Avalue_Set.empty)
+      
+
 
     
 
@@ -951,30 +1005,40 @@ module FlowTracking = struct
     Evaluate an {{!Layout.Ast.body.BApply} application} expression.
   *)
   let rec eval_apply pp id1 id2 =
-    begin [@warning "-8"]
-      let$* AFun (ctx, id, expr) = lookup' id1 in
-      let*  arg = lookup' id2 in
-      call_closure ctx pp id id2 arg
-        (eval_f expr)
-    end
-
+    let* (_, aset) = lookup' id1 in
+    let+ calls = aset
+      |> Avalue_Set.to_seq
+      |> Seqs.traverse begin function
+        | AFun (ctx, id, expr) ->
+          let* arg = lookup' id2 in
+          let+ result = call_closure ctx pp id id2 arg (eval_f expr) in
+          Some result
+        | _ ->
+          AState.pure None
+      end
+    in
+    calls
+    |> Seq.filter_map (fun x -> x)
+    |> Seq.fold_left 
+      (fun (tt, aa) (tset, aset) -> (Type_Set.union tset tt, Avalue_Set.union aset aa))
+      (Type_Set.empty, Avalue_Set.empty)
+    
   (**
     Evaluate the {{!Layout.Ast.body} body} of a clause.
   *)
   and eval_body pp =
     function
     | BVar id  -> register_data_flow pp id *> lookup' id
-    | BVal v   -> eval_value pp v
-    | BOpr o   -> eval_op pp o
-    | BProj (id, lbl)   -> eval_proj pp id lbl
+    | BVal v   -> eval_value pp v >>= with_type
+    | BOpr o   -> eval_op pp o    >>= with_type
+    | BProj (id, lbl)   -> eval_proj  pp id  lbl
     | BApply (id1, id2) -> eval_apply pp id1 id2
     
-    | BInput  -> aset_of_list [AInt `N; AInt `Z; AInt `P]
-    | BRandom -> aset_of_list [AInt `Z; AInt `P]
+    | BInput  -> aset_of_list [AInt `N; AInt `Z; AInt `P] >>= with_type
+    | BRandom -> aset_of_list [AInt `Z; AInt `P]          >>= with_type
 
     | BMatch (id, branches) ->
-        let* v1 = lookup' id in
-        let* tys = type_of v1 in
+        let* (tys, _) = lookup' id in
         let branches = tys 
           |> Type_Set.to_seq
           |> Seq.filter_map (fun ty ->
@@ -986,27 +1050,31 @@ module FlowTracking = struct
         let+ results =
           branches 
           |> Lists.traverse (fun (_, expr) -> 
-              let* final_pp, aset = eval_f expr in
-              register_data_flow pp final_pp $> aset
+              let* (final_pp, _, _) as results = eval_f expr in
+              register_data_flow pp final_pp $> results
           )
         in
         List.fold_left
-          Avalue_Set.union
-          Avalue_Set.empty 
+          (fun (tt, aa) (_, tset, aset) -> (Type_Set.union tt tset, Avalue_Set.union aa aset))
+          (Type_Set.empty, Avalue_Set.empty)
           results
 
   (**
     Evaluate an {{!Layout.Ast.expr} expression}.
   *)
-  and eval_f (expr : Ast.expr) : (label * aset) AState.t =
+  and eval_f (expr : Ast.expr) : (label * tset * aset) AState.t =
     match expr with
     | [] -> raise Empty_Expression
     | Cl (pp, body) :: cls ->
-    let* body_value = eval_body pp body in
-    let* () = register_type_flow pp body_value in
-    let* () = add_to_env' pp body_value in 
+    Format.eprintf "eval(%s)@." pp;
+    let* (body_type, body_value) = eval_body pp body in
+    Format.eprintf "body(%s) had %d types.@." pp (Type_Set.cardinal body_type);
+    if Type_Set.cardinal body_type > 1000 then
+      Type_Set.iter begin fun ty -> Format.eprintf "%a@." pp_simple_type ty end body_type;
+    let* () = register_type_flow pp body_type in
+    let* () = add_to_env' pp (body_type, body_value) in 
     match cls with
-    | [] -> AState.pure (pp, body_value)
+    | [] -> AState.pure (pp, body_type, body_value)
     | _  -> eval_f cls
 
   (**
@@ -1015,7 +1083,7 @@ module FlowTracking = struct
     (Including calling {!Matching.find_required_depths}).
   *)
   let eval ?(k=0) field_depths expr =
-    (snd <$> eval_f expr) {
+    (let+ (_, _, result) = eval_f expr in result) {
       sensitivity  = k;
       inlining = 0;
       field_depths;
@@ -1023,8 +1091,10 @@ module FlowTracking = struct
       data_flow = ID_Map.empty;
       type_flow = ID_Map.empty;
       
-      env_cache   = Context_Map.empty;
-      env_version = Context_Map.empty;
+      env_cache    = Context_Map.empty;
+      env_version  = Context_Map.empty;
+
+      type_cache  = Type_Map.empty;
 
       pp_cache    = ID_Map.empty;
       pp_version  = ID_Map.empty;

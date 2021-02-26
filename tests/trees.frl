@@ -1,98 +1,128 @@
 
-let empty = {.Empty} in
+let empty = {.Nil} in
 
-let blacken = fun tree -> 
-    tree @ {color = {.Black}} 
+let Red = fun data ->
+    { Red = data@{} }
+in
+let Blk = fun data ->
+    { Blk = data@{} }
+in
+
+
+let blacken = fun node ->
+    match node with
+    | { Red: * } -> { Blk = node.Red }
+    | *          -> node
+    end
+in
+
+let get_value = fun node ->
+    match node with
+    | { Red: * } -> node.Red.value
+    | { Blk: * } -> node.Blk.value
+    end
+in
+
+let map_data = fun node f ->
+    match node with
+    | { Red: * } -> Red (f node.Red)
+    | { Blk: * } -> Blk (f node.Blk)
+    end
 in
 
 let balance = fun tree ->
     match tree with
-    | (* case 1 *) 
-    { L: { color: {.Red}
-         ; R: {color: {.Red}} 
-         }
-    } ->
-        { 
-            color = {.Red};
-            value = tree.L.R.value;
-            L = tree.L @ {
-                color = {.Black};
-                R = tree.L.R.L;
-            };
-            R = tree @ {
-                L = tree.L.R.R;
-            };
-        }
-    | (* case 2 *)
-    { R: { color: {.Red}
-         ; R: {color: {.Red}} 
-         }
-    } ->
-        {    
-            color = {.Red};
-            value = tree.R.value;
-            L = tree @ {
-                R = tree.R.L;
-            };
-            R = blacken tree.R.R;
-        }
-    | (* case 3 *)
-    { R: { color: {.Red}
-         ; L: {color: {.Red}} 
-         }
-    } ->
-        {
-            color = {.Red};
-            value = tree.R.L.value;
-            L = tree @ {
-                R = tree.R.L.L;
-            };
-            R = tree.R @ {
-                color = {.Black};
-                L = tree.R.L.R;
-            };
-        }
-    | (* case 4 *)
-    { L: { color: {.Red}
-        ; L: {color: {.Red}} 
-        }
-    } ->
-        {
-            color = {.Red};
-            value = tree.L.value;
-            L = blacken tree.L.L;
-            R = tree @ {
-                L = tree.L.R;
-            };
-        }
+    | { Blk: * } ->
+        let data = tree.Blk in
+        match data with
+        | { L: { Red: { R: { Red: * } } } } ->
+            Red {
+                value = data.L.Red.R.Red.value;
+                L = Blk {
+                    value = data.L.Red.value;
+                    L = data.L.Red.L;
+                    R = data.L.Red.R.Red.L;
+                };
+                R = Blk {
+                    value = data.value;
+                    L = data.L.Red.R.Red.R;
+                    R = data.R;
+                };
+            }
+        | { R: { Red: { R: { Red: * } } } } ->
+            Red { 
+                value = data.R.Red.value;
+                L = Blk {
+                    value = data.value;
+                    L = data.L;
+                    R = data.R.Red.L;
+                };
+                R = blacken data.R.Red.R;
+            }
+        | { R: { Red: { L: { Red: * } } } } ->
+            Red {
+                value = data.R.Red.L.Red.value;
+                L = Blk {
+                    value = data.value;
+                    L = data.L;
+                    R = data.R.Red.L.Red.L;
+                };
+                R = Blk {
+                    value = data.R.Red.value;
+                    L = data.R.Red.L.Red.R;
+                    R = data.R.Red.R;
+                };
+            }
+        | { L: { Red: { L: { Red: * } } } } ->
+            Red {
+                value = data.L.Red.value;
+                L = blacken data.L.Red.L;
+                R = Blk {
+                    value = data.value;
+                    L = data.L.Red.R;
+                    R = data.R;
+                };
+            }
+        | * ->
+            tree
+        end
     | * ->
         tree
     end
 in
 
 let insert = fun val tree ->
-    let tree1 = 
     match tree with
-    | {.Empty} -> { color={.Red}; value=val; L=empty; R=empty }
+    | { Nil: * } -> 
+        Red { value=val; L=empty; R=empty }
     | * ->
-        if val < tree.value then
-            balance (tree @ {L = insert val tree.L})
-        else if val == tree.value then
+        let tree_val = get_value tree in
+        if val < tree_val then
+            balance (map_data tree (fun data -> data @ { L = insert val data.L }))
+        else if val == tree_val then
             tree
         else
-            balance (tree @ {R = insert val tree.R})
+            balance (map_data tree (fun data -> data @ { R = insert val data.R }))
     end
-    in 
-        blacken tree1
 in
 
+let count_red = fun tree ->
+    match tree with
+    | { Blk : * } -> 
+        count_red tree.Blk.L + count_red tree.Blk.R
+    | { Red : * } -> 
+        1 + count_red tree.Red.L + count_red tree.Red.R
+    | { Nil : * } ->
+        0
+    end
+in
 
 let loop = fun t ->
     let n = input in
     if n == 0 then 
-        t
+        count_red t
     else
-        loop (insert n t)
+        loop (blacken (insert n t))
 in
 
 loop empty

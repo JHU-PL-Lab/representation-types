@@ -51,6 +51,7 @@ module C = struct
 
   type convention =
     [ `Stack of int | `Heap ]
+    [@@deriving show]
 
   type compile_state =
     {
@@ -326,6 +327,7 @@ module C = struct
     id_to_union
     |> Lists.traverse_ (fun (id, tys) ->
       let* conv = convention_of_union id in
+      Format.eprintf "%a : conv(%a), size(%d)@." fmt_union id pp_convention conv (Int_Set.cardinal tys);
       let fmt_conv fmt =
         match conv with
         | `Stack _ -> ff fmt " "
@@ -542,7 +544,7 @@ module C = struct
     | `Heap    -> emit [sf "%a = HEAP_ALLOC(sizeof(*%a));" fmt_place_loc dest fmt_place_loc dest]
 
 
-  let rec emit_clauses (info : Analysis.Closures.closure_info) dest =
+  let rec emit_clauses (info : Analysis.Closures.closure_info) dest_pp dest =
     function
     | [] -> raise Empty_Expression
     | Cl (pp, body) as cl :: [] ->
@@ -550,7 +552,7 @@ module C = struct
         emit [sf "/* %a */" pp_clause' cl] *>
         begin
           if Int_Set.cardinal pp_u != 0 then
-            emit_body info pp dest body
+            emit_body info pp dest_pp dest body
           else
             State.pure ()
         end
@@ -560,10 +562,10 @@ module C = struct
         begin
           if Int_Set.cardinal pp_u == 0 then State.pure () else
           emit [sf "%a %s;" fmt_union pp_uid pp] *>
-          emit_body info pp (`Loc pp) body
+          emit_body info pp pp (`Loc pp) body
         end *>
         emit [""] *>
-        emit_clauses info dest cls
+        emit_clauses info dest_pp dest cls
 
   and emit_closure_defn name expr : unit State.t =
     let* info = get_closure_info name in
@@ -587,9 +589,12 @@ module C = struct
           arg]
     in
     bracketed_indented func_signature ["}\n\n"]
-      (emit_clauses info (place_deref (`Ptr info.return)) expr)
+    begin
+      emit ["tail_call:;"] *>
+      emit_clauses info info.return (place_deref (`Ptr info.return)) expr
+    end
 
-  and emit_body info pp dest =
+  and emit_body info pp dest_pp dest =
     function
     | BVar id ->
         let* id = get_place info id in
@@ -666,7 +671,7 @@ module C = struct
           | (lbl, id) :: fields ->
               let* id_u, id_uid = union_of id in
               let* id_place = get_place info id in
-              let* fmt_id_place_field = fmt_pp_field pp in
+              let* fmt_id_place_field = fmt_pp_field id in
               let type_tags = Int_Set.elements id_u in
               if Int_Set.cardinal id_u = 1 then
                 let field_tags' = ID_Map.add lbl (Tag (Int_Set.choose id_u)) field_tags in
@@ -731,11 +736,22 @@ module C = struct
         let* i1_place = get_place info i1 in
         let* i2_place = get_place info i2 in
         let* fmt_i1_place_type = fmt_pp_type i1 in
-        emit [sf "CALL(%a%a, &%a, %a);"
-          fmt_place_loc i1_place fmt_i1_place_type fn
-          fmt_place_loc dest
-          fmt_place_loc i2_place]
-    
+        begin match ID_Map.find i1 info.scope with
+        | Self_closure when dest_pp = info.return ->
+            let* arg_place = get_place info (Option.get info.argument) in
+            emit [sf "%a = %a;" fmt_place_loc arg_place fmt_place_loc i2_place] *>
+            emit ["goto tail_call;"]
+        | Self_closure ->
+          emit [sf "%a(_clo, &%a, %a);"
+            fmt_closure_impl info.name
+            fmt_place_loc dest
+            fmt_place_loc i2_place]
+        | _otherwise ->
+          emit [sf "CALL(%a%a, &%a, %a);"
+            fmt_place_loc i1_place fmt_i1_place_type fn
+            fmt_place_loc dest
+            fmt_place_loc i2_place]
+        end
 
     | BProj (id, lbl) ->
         let* id_u, id_uid = union_of id in
@@ -767,7 +783,7 @@ module C = struct
           let* { inferred_types; _ } = State.ask in
           let+ ty = type_of_tid tid in  
           match ty with
-          | TRec (Some name, _fields) ->
+          | TRec (Some name, fields) when fields |> List.map fst |> List.mem lbl ->
             let rec_field_pp = Printf.sprintf "%s.%s" name lbl in
             begin match ID_Map.find_opt rec_field_pp inferred_types.pp_to_union_id with
             | Some rf_uid when rf_uid = pp_uid ->
@@ -817,8 +833,9 @@ module C = struct
         if Int_Set.cardinal i1_u = 1 then
           let i1_tid = Int_Set.choose i1_u in
           let branch_ix = Type_Tag_Map.find (Tag i1_tid) tag_to_branch in
-          let (_, branch) = List.nth branches branch_ix in
-          emit_clauses info dest branch
+          match List.nth_opt branches branch_ix with
+          | Some((_, branch)) -> emit_clauses info dest_pp dest branch
+          | None              -> emit ["ABORT;"]
         else
         let module Invert_Maps = Traversable_Util(Maps(Invert_Map)) in
         let module Invert_Maps = Invert_Maps.Make_Traversable(State) in
@@ -829,16 +846,21 @@ module C = struct
             |> Invert_Map.mapi (fun branch_ix tids ->
                 let* () = tids |> Lists.traverse_ 
                   (fun (Tag tid) -> emit [sf "case %a_%a:" fmt_union i1_uid fmt_type tid]) in
-                let (_, branch) = List.nth branches branch_ix in
+                let branch_code = 
+                  begin match List.nth_opt branches branch_ix with
+                  | Some((_, branch))  -> emit_clauses info dest_pp dest branch
+                  | None | exception _ -> emit ["ABORT;"]
+                  end
+                in
                 bracketed_indented ["{"] ["}"]
                 begin
-                  emit_clauses info dest branch *>
+                  branch_code *>
                   emit ["break;"]
                 end)
             |> Invert_Maps.sequence_
           in
           emit ["default:"] *>
-          indent (emit ["ABORT;"])
+          indent (emit ["UNREACHABLE;"])
         end
 
     | BOpr 

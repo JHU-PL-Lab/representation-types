@@ -686,7 +686,7 @@ module Traversable_Util (T : Traversable) = struct
   module Make_Traversable (A : Applicative) = struct
     include T.Make_Traversable(A)
     let sequence ts = traverse (fun x -> x) ts
-    let traverse_ f ts = A.map (fun _ -> ()) (traverse f ts)
+    let traverse_ f ts = A.map ignore (traverse f ts)
     let sequence_ ts = traverse_ (fun x -> x) ts
   end
 

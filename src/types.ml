@@ -122,9 +122,9 @@ let rec canonicalize_simple (base : simple_type) : simple_type =
   match base with
   | TRec (name, record) ->
       let record' = record
-        |> List.map (fun (lbl, elem_base) ->
-            (lbl, canonicalize_simple elem_base)) 
+        |> List.map (fun (lbl, elem_base) -> (lbl, canonicalize_simple elem_base)) 
+        |> List.sort (fun (l1,_) (l2,_) -> compare l1 l2)
       in
-      TRec (name, List.sort compare record')
+      TRec (name, record')
 
   | other -> other

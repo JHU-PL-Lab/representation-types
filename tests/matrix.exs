@@ -68,4 +68,4 @@ defmodule Matrix do
 end
 
 
-main()
+Matrix.main()

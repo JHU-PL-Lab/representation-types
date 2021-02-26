@@ -3,6 +3,7 @@
 *.cmx
 *.o
 *.sh
+*.exe
 
 _build/
 tests-fuzzed/
