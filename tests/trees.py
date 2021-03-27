@@ -117,8 +117,10 @@ def count_red(node) -> int:
 if __name__ == "__main__":
 
     tree = None
-
-    while (value := int(input())) != 0:
+    
+    value = int(input())
+    while value != 0:
         tree = Node.blacken(insert(tree, value))
+        value = int(input())
 
     print(count_red(tree))

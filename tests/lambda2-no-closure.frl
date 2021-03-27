@@ -1,0 +1,111 @@
+
+let var = fun id ->
+    { 
+        id = id;
+
+        subst = fun self var value ->
+            if var == id then value else self 
+    }   
+in
+
+let rec lam = fun id body ->
+    { 
+        id   = id;
+        body = body;
+
+        subst = fun self var value ->
+            if var == self.id then
+                self
+            else
+                lam self.id (self.body.subst self.body var value);
+    
+        eval = fun self ->
+            self;
+
+        apply = fun self arg ->
+            let body = self.body.subst self.body self.id arg in
+            body.eval body
+    }
+in
+
+let rec apl = fun lhs rhs ->
+    {
+        lhs = lhs;
+        rhs = rhs;
+
+        subst = fun self var value ->
+            apl (self.lhs.subst self.lhs var value)
+                (self.rhs.subst self.rhs var value);
+
+        eval = fun self ->
+            let lhs = self.lhs.eval self.lhs in
+            let rhs = self.rhs.eval self.rhs in
+            lhs.apply lhs rhs
+    }
+in
+
+
+let succ =
+    lam 1 ( (* n *)
+    lam 2 ( (* f *)
+    lam 3 ( (* x *)
+        apl (var 2) (apl (apl (var 1) (var 2)) (var 3))
+    )))
+in
+
+let add =
+    lam 1 ( (* n *)
+    lam 2 ( (* m *)
+        apl (apl (var 1) succ) (var 2)
+    ))
+in
+
+let mul = 
+    lam 1 ( (* n *)
+    lam 2 ( (* m *)
+    lam 3 ( (* f *)
+        apl (var 1) (apl (var 2) (var 3))
+    )))
+in
+
+let pred =
+    lam 1 ( (* n *)
+    lam 2 ( (* f *)
+    lam 3 ( (* x *)
+        apl (
+            apl (
+                apl (var 1) (lam 4 (lam 5 (apl (var 5) (apl (var 4) (var 2)))))
+            ) (
+                lam 6 (var 3)
+            )
+        ) (
+            lam 6 (var 6)
+        )
+    )))
+in
+
+let sub =
+    lam 1 ( (* n *)
+    lam 2 ( (* m *)
+        apl (apl (var 2) pred) (var 1)
+    ))
+in
+
+
+let rec church = fun n ->
+    if n == 0 then 
+        lam 0 (lam 1 (var 1))
+    else
+        apl succ (church (n - 1))
+in
+
+let identity = 
+    lam 0 (apl (apl (var 0) succ) (church 0))
+in
+
+
+let n = input in
+
+let one = apl identity (apl (apl sub (church n)) (church (n - 1))) in
+
+one.eval one

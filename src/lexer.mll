@@ -58,6 +58,7 @@ rule read =
       | "in"     -> KW_IN
       | "input"  -> KW_INPUT
       | "random" -> KW_RANDOM
+      | "rec"    -> KW_REC
       | "int"    -> KW_INT
       | "let"    -> KW_LET
       | "match"  -> KW_MATCH

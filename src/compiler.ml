@@ -21,6 +21,10 @@ let c_prelude =
 #include <stdlib.h>
 #include <time.h>
 
+#if defined(GC)
+#include <gc/gc.h>
+#endif
+
 typedef void Func();
 
 typedef struct {
@@ -32,7 +36,14 @@ typedef struct {
 #define COPY(...) __builtin_memcpy(__VA_ARGS__)
 #define COMBINE(a, b) (a) >= (b) ? (a) * (a) + (a) + (b) : (a) + (b) * (b)
 #define CALL(c, ...) ((c)->_func)((c), __VA_ARGS__)
+
+#if defined(GC)
+#define HEAP_ALLOC(...) GC_MALLOC(__VA_ARGS__)
+#else
 #define HEAP_ALLOC(...) malloc(__VA_ARGS__)
+#endif
+
+
 #define HEAP_VALUE(type, ...) \
   ({ type *ptr = HEAP_ALLOC(sizeof(type)); *ptr = (type) __VA_ARGS__; (void*)ptr; })
 #define UNTAGGED(U, T, value) ((U) { . T = value })

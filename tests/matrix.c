@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <time.h>
 
+#if defined(GC)
+#include <gc/gc.h>
+#endif
+
 typedef void Func();
 
 typedef struct {
@@ -15,7 +19,14 @@ typedef struct {
 #define COPY(...) __builtin_memcpy(__VA_ARGS__)
 #define COMBINE(a, b) (a) >= (b) ? (a) * (a) + (a) + (b) : (a) + (b) * (b)
 #define CALL(c, ...) ((c)->_func)((c), __VA_ARGS__)
+
+#if defined(GC)
+#define HEAP_ALLOC(...) GC_MALLOC(__VA_ARGS__)
+#else
 #define HEAP_ALLOC(...) malloc(__VA_ARGS__)
+#endif
+
+
 #define HEAP_VALUE(type, ...) \
   ({ type *ptr = HEAP_ALLOC(sizeof(type)); *ptr = (type) __VA_ARGS__; (void*)ptr; })
 #define UNTAGGED(U, T, value) ((U) { . T = value })
@@ -667,6 +678,7 @@ void fprint_Union8(FILE *stream, const Union8* value) {
 }
 
 void ___main(const __main_Closure *_clo, Union1 *restrict $0) {
+  tail_call:;
   /* let mat4x4_col0$0 = fun m$0 -> (...) */
   Union5 mat4x4_col0$0;
   static const mat4x4_col0$0_Closure _mat4x4_col0$0$ = { ._func = _mat4x4_col0$0 };
@@ -731,6 +743,7 @@ void ___main(const __main_Closure *_clo, Union1 *restrict $0) {
 
 
 void _mat4x4_col0$0(const mat4x4_col0$0_Closure *_clo, Union2 *restrict $1, Union4 m$0) {
+  tail_call:;
   /* let $2 = m$0._0 */
   Union3 $2;
   switch (m$0->tag) {
@@ -882,6 +895,7 @@ void _mat4x4_col0$0(const mat4x4_col0$0_Closure *_clo, Union2 *restrict $1, Unio
 
 
 void _mat4x4_col1$0(const mat4x4_col1$0_Closure *_clo, Union2 *restrict $10, Union4 m$1) {
+  tail_call:;
   /* let $11 = m$1._0 */
   Union3 $11;
   switch (m$1->tag) {
@@ -1033,6 +1047,7 @@ void _mat4x4_col1$0(const mat4x4_col1$0_Closure *_clo, Union2 *restrict $10, Uni
 
 
 void _mat4x4_col2$0(const mat4x4_col2$0_Closure *_clo, Union2 *restrict $19, Union4 m$2) {
+  tail_call:;
   /* let $20 = m$2._0 */
   Union3 $20;
   switch (m$2->tag) {
@@ -1184,6 +1199,7 @@ void _mat4x4_col2$0(const mat4x4_col2$0_Closure *_clo, Union2 *restrict $19, Uni
 
 
 void _mat4x4_col3$0(const mat4x4_col3$0_Closure *_clo, Union2 *restrict $28, Union4 m$3) {
+  tail_call:;
   /* let $29 = m$3._0 */
   Union3 $29;
   switch (m$3->tag) {
@@ -1335,6 +1351,7 @@ void _mat4x4_col3$0(const mat4x4_col3$0_Closure *_clo, Union2 *restrict $28, Uni
 
 
 void _$37(const $37_Closure *_clo, Union1 *restrict $38, Union2 v2$0) {
+  tail_call:;
   /* let $39 = v1$0._0 */
   Union1 $39;
   switch (_clo->v1$0->tag) {
@@ -1529,6 +1546,7 @@ void _$37(const $37_Closure *_clo, Union1 *restrict $38, Union2 v2$0) {
 
 
 void _vec4_dot$0(const vec4_dot$0_Closure *_clo, Union5 *restrict $37, Union3 v1$0) {
+  tail_call:;
   /* let $37 = fun v2$0 -> (...) */
   (*$37).Type4 = HEAP_VALUE($37_Closure, {
     ._func = _$37,
@@ -1538,6 +1556,7 @@ void _vec4_dot$0(const vec4_dot$0_Closure *_clo, Union5 *restrict $37, Union3 v1
 
 
 void _$55(const $55_Closure *_clo, Union3 *restrict $56, Union4 m2$1) {
+  tail_call:;
   /* let $57 = vec4_dot$0 v1$1 */
   Union5 $57;
   CALL(_clo->vec4_dot$0.Type4, &$57, _clo->v1$1);
@@ -1597,6 +1616,7 @@ void _$55(const $55_Closure *_clo, Union3 *restrict $56, Union4 m2$1) {
 
 
 void _mat4x4_mul_row$0(const mat4x4_mul_row$0_Closure *_clo, Union5 *restrict $55, Union3 v1$1) {
+  tail_call:;
   /* let $55 = fun m2$1 -> (...) */
   (*$55).Type4 = HEAP_VALUE($55_Closure, {
     ._func = _$55,
@@ -1611,6 +1631,7 @@ void _mat4x4_mul_row$0(const mat4x4_mul_row$0_Closure *_clo, Union5 *restrict $5
 
 
 void _$53(const $53_Closure *_clo, Union4 *restrict $54, Union4 m2$0) {
+  tail_call:;
   /* let mat4x4_mul_row$0 = fun v1$1 -> (...) */
   Union5 mat4x4_mul_row$0;
   mat4x4_mul_row$0.Type4 = HEAP_VALUE(mat4x4_mul_row$0_Closure, {
@@ -1717,6 +1738,7 @@ void _$53(const $53_Closure *_clo, Union4 *restrict $54, Union4 m2$0) {
 
 
 void _mat4x4_mul$0(const mat4x4_mul$0_Closure *_clo, Union5 *restrict $53, Union4 m1$0) {
+  tail_call:;
   /* let $53 = fun m2$0 -> (...) */
   (*$53).Type4 = HEAP_VALUE($53_Closure, {
     ._func = _$53,
@@ -1731,6 +1753,7 @@ void _mat4x4_mul$0(const mat4x4_mul$0_Closure *_clo, Union5 *restrict $53, Union
 
 
 void _mat4x4_det$0(const mat4x4_det$0_Closure *_clo, Union1 *restrict $81, Union4 m$4) {
+  tail_call:;
   /* let $82 = m$4._0 */
   Union3 $82;
   switch (m$4->tag) {
@@ -5473,6 +5496,7 @@ void _mat4x4_det$0(const mat4x4_det$0_Closure *_clo, Union1 *restrict $81, Union
 
 
 void _mat4x4_input$0(const mat4x4_input$0_Closure *_clo, Union4 *restrict $368, Union6 _$0) {
+  tail_call:;
   /* let $369 = input */
   Union1 $369;
   __input(&$369.Type1);
@@ -5584,6 +5608,7 @@ void _mat4x4_input$0(const mat4x4_input$0_Closure *_clo, Union4 *restrict $368, 
 
 
 void _loop$0(const loop$0_Closure *_clo, Union1 *restrict $393, Union1 n$0) {
+  tail_call:;
   /* let $394 = mat4x4_mul$0 m1$1 */
   Union5 $394;
   CALL(_clo->mat4x4_mul$0.Type4, &$394, _clo->m1$1);
@@ -5630,7 +5655,8 @@ void _loop$0(const loop$0_Closure *_clo, Union1 *restrict $393, Union1 n$0) {
       $403.Type1 = n$0.Type1 - $402.Type1;
       
       /* let $401 = loop$0 $403 */
-      CALL(UNTAGGED(Union5, Type4, (const Closure*)_clo).Type4, &(*$393), $403);
+      n$0 = $403;
+      goto tail_call;
       break;
     }
     case Union7_Type2:
@@ -5640,12 +5666,13 @@ void _loop$0(const loop$0_Closure *_clo, Union1 *restrict $393, Union1 n$0) {
       break;
     }
     default:
-      ABORT;
+      UNREACHABLE;
   }
 }
 
 
 void _main$0(const main$0_Closure *_clo, Union1 *restrict $389, Union8 _$1) {
+  tail_call:;
   /* let num_reps$0 = input */
   Union1 num_reps$0;
   __input(&num_reps$0.Type1);
