@@ -53,7 +53,7 @@ let main = fun _ ->
     let m2 = mat4x4_input {} in
     let m3 = mat4x4_input {} in
 
-    let loop = fun n ->
+    let rec loop = fun n ->
         let det = mat4x4_det (mat4x4_mul m1 (mat4x4_mul m2 m3)) in
         if n == 1 then det else
         loop (n - 1)

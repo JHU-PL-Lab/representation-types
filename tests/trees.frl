@@ -91,7 +91,7 @@ let balance = fun tree ->
     end
 in
 
-let insert = fun val tree ->
+let rec insert = fun val tree ->
     match tree with
     | { Nil: * } -> 
         Red { value=val; L=empty; R=empty }
@@ -106,7 +106,7 @@ let insert = fun val tree ->
     end
 in
 
-let count_red = fun tree ->
+let rec count_red = fun tree ->
     match tree with
     | { Blk : * } -> 
         count_red tree.Blk.L + count_red tree.Blk.R
@@ -117,7 +117,7 @@ let count_red = fun tree ->
     end
 in
 
-let loop = fun t ->
+let rec loop = fun t ->
     let n = input in
     if n == 0 then 
         count_red t

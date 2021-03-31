@@ -257,7 +257,11 @@ module Closures = struct
           (function
           | Some Available -> Some Captured
           | Some other     -> Some other (* local variables stay local, captured stay captured. *)
-          | _ -> raise Open_Expression
+          | _ ->
+            begin 
+              Format.eprintf "Variable %s not found in scope: %a\n" id (pp_id_map pp_variable_kind) s.curr_scope;
+              raise Open_Expression
+            end
           )
     })
 
@@ -267,7 +271,10 @@ module Closures = struct
 
   and visit_clause (Cl (id, body)) =
     visit_body id body *>
-    add_var Local id
+    begin 
+      Format.eprintf "adding_local_var %s (%a)\n" id pp_body' body;
+      add_var Local id
+    end
 
   and visit_body pp =
     function

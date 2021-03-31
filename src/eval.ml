@@ -16,7 +16,7 @@ let repeated_input i : int Seq.t =
   let rec inf () = Seq.Cons (i, inf) in inf
 
 let increasing_input : int Seq.t =
-  Seq.unfold (fun i -> Some (i, i+1)) 1
+  Seq.unfold (fun i -> Some (i, i+1)) 10
 
 (**
   Exceptions which may be thrown during interpretation.

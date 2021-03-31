@@ -32,7 +32,7 @@
 %token OP_PLUS OP_MINUS OP_DIVIDE OP_APPEND UNIV_PAT
 
 %token KW_MATCH KW_WITH KW_FUN KW_AND KW_OR KW_NOT KW_MOD
-%token KW_LET KW_IN KW_END KW_INT KW_INPUT KW_IF KW_THEN KW_ELSE KW_RANDOM
+%token KW_LET KW_REC KW_IN KW_END KW_INT KW_INPUT KW_IF KW_THEN KW_ELSE KW_RANDOM
 %token ALTERNATIVE ARROW
 
 %start <Ast.expr> main
@@ -114,10 +114,16 @@ let ssa ==
 
 let clause ==
   | KW_LET; id = binding; GETS; body = expr0; KW_IN; {
+      let* body = body in
+      let* id = id in
+      emit @@ Cl (id, body)
+  }
+  | KW_LET; KW_REC; id = binding; GETS; body = expr0; KW_IN; {
       let* id = id in
       let* body = body in
       emit @@ Cl (id, body)
   }
+  
 
 let expr ==
   | clauses = clause*; body = expr0; {
