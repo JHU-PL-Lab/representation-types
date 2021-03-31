@@ -11,7 +11,7 @@ defmodule Trees do
 	def get_value(node) do
 		case node do
 			{:Red, data} -> data.value
-      {:Blk, data} -> data.value
+	    {:Blk, data} -> data.value
 		end
 	end
 
@@ -51,10 +51,10 @@ defmodule Trees do
 				}}
 
 			%{r: {:Red, r = %{l: {:Red, rl}}}} ->
-        {:Red, %{
+	    	{:Red, %{
 					value: rl.value,
 					l: {:Blk, %{
-						value: data.value,
+          value: data.value,
 						l: data.l,
 						r: rl.l,
 					}},
@@ -64,7 +64,6 @@ defmodule Trees do
 						r: r.r,
 					}},
 				}}
-
 			
 			%{l: {:Red, l = %{l: {:Red, _}}}} ->
 				{:Red, %{
@@ -77,7 +76,7 @@ defmodule Trees do
 					}},
 				}}
 
-      _ -> tree
+	    _ -> tree
 		end
 	end
 
@@ -100,13 +99,13 @@ defmodule Trees do
 		end
 	end
 
-  def count_red(:Empty), do: 0
-  def count_red({:Red, data}) do
-    1 + count_red(data.l) + count_red(data.r)
-  end
-  def count_red({:Blk, data}) do
-    count_red(data.l) + count_red(data.r)
-  end
+	def count_red(:Empty), do: 0
+	def count_red({:Red, data}) do
+		1 + count_red(data.l) + count_red(data.r)
+	end
+	def count_red({:Blk, data}) do
+		count_red(data.l) + count_red(data.r)
+	end
 
 
 	def get_input() do
