@@ -271,10 +271,7 @@ module Closures = struct
 
   and visit_clause (Cl (id, body)) =
     visit_body id body *>
-    begin 
-      Format.eprintf "adding_local_var %s (%a)\n" id pp_body' body;
-      add_var Local id
-    end
+    add_var Local id
 
   and visit_body pp =
     function
@@ -1076,8 +1073,6 @@ module FlowTracking = struct
     Format.eprintf "eval(%s)@." pp;
     let* (body_type, body_value) = eval_body pp body in
     Format.eprintf "body(%s) had %d types.@." pp (Type_Set.cardinal body_type);
-    if Type_Set.cardinal body_type > 1000 then
-      Type_Set.iter begin fun ty -> Format.eprintf "%a@." pp_simple_type ty end body_type;
     let* () = register_type_flow pp body_type in
     let* () = add_to_env' pp (body_type, body_value) in 
     match cls with
