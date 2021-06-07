@@ -12,7 +12,7 @@ let apl = fun e1 e2 ->
 in
 
 
-let subst = fun args ->
+let rec subst = fun args ->
     let var   = args.0 in
     let value = args.1 in
     let term  = args.2 in
@@ -29,7 +29,7 @@ let subst = fun args ->
     end
 in
 
-let eval = fun term ->
+let rec eval = fun term ->
     match term with
     | { Lam : * } -> term
     | { Apl : * } ->
@@ -90,7 +90,7 @@ let sub =
 in
 
 
-let church = fun n ->
+let rec church = fun n ->
     if n == 0 then 
         lam 0 (lam 1 (var 1))
     else

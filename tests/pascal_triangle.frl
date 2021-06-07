@@ -1,0 +1,13 @@
+
+let rec getNumber = fun row col ->
+    if (col == 0) or (row == 0) or (col == row) then
+        1
+    else
+        getNumber (row - 1) (col - 1) + 
+        getNumber (row - 1) col
+in
+
+let row = input in
+let col = input in
+
+getNumber row col
