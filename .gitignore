@@ -4,6 +4,7 @@
 *.o
 *.sh
 *.exe
+*.c
 
 _build/
 __pycache__/
