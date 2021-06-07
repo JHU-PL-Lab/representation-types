@@ -1,0 +1,35 @@
+
+let is_triplet = fun a b c ->
+    (a*a) + (b*b) == (c*c)
+in
+
+
+let desired_sum = input in
+
+
+let rec a_loop = fun a ->
+    
+    let rec b_loop = fun b ->
+
+        let c = desired_sum - (a + b) in
+        if c == 0 then
+            false
+        else if is_triplet a b c then
+            a * b * c
+        else
+            b_loop (b + 1)
+
+    in
+
+    let r = b_loop (a + 1) in
+    match r with
+    | int   -> r
+    | false ->
+        a_loop (a + 1)
+    end
+in
+
+a_loop 1
+
+
+        
