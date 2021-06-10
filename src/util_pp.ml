@@ -7,6 +7,9 @@ type ('a, 'b) formatter1
   = 'a formatter -> 'b formatter
 
 
+
+let pp_list         = Util.pp_list
+
 let pp_type_tag     = Types.pp_type_tag
 let pp_simple_type  = Types.pp_simple_type
 

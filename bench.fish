@@ -6,6 +6,10 @@ set benchmarks \
 
 for bench in $benchmarks
 
+    if test -e "$bench.json"
+        continue
+    end
+
     set -l cmds
     set -l inputs tests/$bench*.input
 
@@ -40,11 +44,9 @@ for bench in $benchmarks
     echo $cmds
     echo
 
-    if test ! -e "$bench.json"
-        # For some reason, hyperfine fails if run directly (!?)
-        # note that it only fails inside a fish _script_, not at the prompt (!?)
-        # this is stupid but it works...
-        bash -c "hyperfine -w 1 --export-json $bench.json --export-markdown $bench-results.md -u millisecond $cmds"
-    end
+    # For some reason, hyperfine fails if run directly (!?)
+    # note that it only fails inside a fish _script_, not at the prompt (!?)
+    # this is stupid but it works...
+    bash -c "hyperfine -w 1 --export-json $bench.json --export-markdown $bench-results.md -u millisecond $cmds"
 end
 

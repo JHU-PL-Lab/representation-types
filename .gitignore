@@ -1,10 +1,10 @@
 .DS_Store
 *.cmi
 *.cmx
-*.o
+**/*.o
 *.sh
-*.exe
-*.c
+**/*.exe
+**/*.c
 
 _build/
 __pycache__/

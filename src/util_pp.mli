@@ -21,6 +21,8 @@ type ('a, 'b) formatter1
   = 'a formatter -> 'b formatter
 
 
+val pp_list : ('a, 'a list) formatter1
+
 val pp_type_tag : Types.type_tag formatter
   [@@ocaml.toplevel_printer]
 
