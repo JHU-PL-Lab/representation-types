@@ -1242,10 +1242,10 @@ module Typing = struct
     let compare = ID_Map.compare Int.compare
   end)
 
-  type refine_fold_t = 
+  type refine_fold_t =
     {
       field_unions  : string Field_Union_Map.t; (* ID assigned to each field/union record shape. *)
-      record_rename : ident ID_Map.t;           (* ID of record to the new one *)
+      record_rename : simple_type Type_Map.t;   (* ID of record to the new one *)
     }
 
   module State = RWS_Util
@@ -1268,23 +1268,25 @@ module Typing = struct
   let project_pp_of id lbl =
     id ^ "." ^ lbl
 
-  let get_record_name (name: string) (fields: label list) : string State.t =
+  let get_record_renamed (name: string) (fields: (label * simple_type) list) : simple_type State.t =
     let* { field_unions; record_rename } = State.get in
     let* { pp_to_union_id; _ } = State.ask in
+    let ty = canonicalize_simple @@ TRec (Some name, fields) in
     let unions = fields
       |> List.to_seq
+      |> Seq.map fst
       |> Seq.map (fun f -> (f, ID_Map.find (project_pp_of name f) pp_to_union_id))
       |> ID_Map.of_seq
     in
     match Field_Union_Map.find_opt unions field_unions with
     | None ->
         let field_unions  = Field_Union_Map.add unions name field_unions in
-        let record_rename = ID_Map.add name name record_rename in
-        State.put { field_unions; record_rename } $> name
+        let record_rename = Type_Map.add ty ty record_rename in
+        State.put { field_unions; record_rename } $> ty
     | Some(name') ->
-        let+ () = State.modify (fun s -> { s with 
-          record_rename = ID_Map.add name name' record_rename }) in
-        name'
+        let ty' = canonicalize_simple @@ TRec (Some name', fields) in
+        let record_rename = Type_Map.add ty ty' record_rename in
+        State.put { field_unions; record_rename } $> ty'
 
   let refine_type_set type_set : Type_Set.t State.t =
     let open Lists.Make_Traversable(State) in
@@ -1292,9 +1294,7 @@ module Typing = struct
     let+ type_list' = type_list |> traverse begin
       function
       | TRec (Some name, fields) ->
-          let field_names = List.map fst fields in
-          let+ name = get_record_name name field_names in
-          TRec (Some name, fields)
+          get_record_renamed name fields
       | other -> State.pure other
       end
     in
@@ -1304,13 +1304,13 @@ module Typing = struct
     let ({ record_rename = record_rename'; _ }, (), type_flow') =
       let open ID_Maps.Make_Traversable(State) in
       let make_type_flow = type_flow |> traverse refine_type_set in
-      make_type_flow inferred_types {field_unions = Field_Union_Map.empty; record_rename = ID_Map.empty}
+      make_type_flow inferred_types {field_unions = Field_Union_Map.empty; record_rename = Type_Map.empty}
     in
-    let record_rename' = ID_Map.merge (fun _pp name name' ->
-      match name, name' with
-      | _, Some(name')   -> Some(name')
-      | Some(name), None -> ID_Map.find_opt name record_rename'
-      | None, None       -> None
+    let record_rename' = Type_Map.merge (fun _ty0 ty ty' ->
+      match ty, ty' with
+      | _, Some(ty')   -> Some(ty')
+      | Some(ty), None -> Type_Map.find_opt ty record_rename'
+      | None, None     -> None
     ) record_rename record_rename' in
     (* Repeatedly refine until the number of types stabilizes. *)
     let inferred_types' = inferred_types_from_flow type_flow' in
@@ -1334,7 +1334,7 @@ module Typing = struct
     (type_flow : Type_Set.t ID_Map.t) =
     let type_flow = type_flow_closure data_flow type_flow in
     let inferred_types = inferred_types_from_flow type_flow in
-      refine_record_unions (type_flow, inferred_types, ID_Map.empty)
+      refine_record_unions (type_flow, inferred_types, Type_Map.empty)
 
 end
 
@@ -1376,13 +1376,23 @@ module Tagging = struct
 
 
   (**
+    Input immutable data
+  *)
+  type input_t =
+    {
+      field_depths   : Matching.field_depth_t;
+      inferred_types : Typing.inferred_types_t;
+      record_rename  : simple_type Type_Map.t;
+    }
+
+  (**
     Using the Reader-Writer-State monad stack
     for convenience of separating the input
     and state data types. We don't need the Writer
     functionality so we stub in the unit monoid.
   *)
   module State = RWS_Util
-    (struct type t = Typing.inferred_types_t * ident ID_Map.t end)
+    (struct type t = input_t end)
     (UnitM)
     (struct type t = tag_tables end)
 
@@ -1395,7 +1405,7 @@ module Tagging = struct
     Lookup the union ID associated to a program point.
   *)
   let union_id_of (pp : ident) : int State.t =
-    let+ { pp_to_union_id = pp_unions; _ } = State.asks fst in
+    let+ { pp_to_union_id = pp_unions; _ } = State.asks (fun s -> s.inferred_types) in
     (*
       If the program point has no assigned type,
       it effectively is of type bottom, since no value
@@ -1413,7 +1423,7 @@ module Tagging = struct
   *)
   let union_of' (pp : ident) : (int * Int_Set.t) State.t =
     let* uid = union_id_of pp in
-    let+ { id_to_union; _ } = State.asks fst in
+    let+ { id_to_union; _ } = State.asks (fun s -> s.inferred_types) in
     (uid, Int_Map.find uid id_to_union)
 
   (**
@@ -1428,7 +1438,7 @@ module Tagging = struct
     with the given type tag.
   *)
   let type_of_tag (Tag tag) : simple_type State.t =
-    let+ { id_to_type; _ } = State.asks fst in
+    let+ { id_to_type; _ } = State.asks (fun s -> s.inferred_types) in
     id_to_type |> Int_Map.find tag
 
   (**
@@ -1436,7 +1446,7 @@ module Tagging = struct
     entries in the union type specified by an ID.
   *)
   let tags_of_union (uid : union_id) : type_tag list State.t =
-    let+ { id_to_union; _ } = State.asks fst in
+    let+ { id_to_union; _ } = State.asks (fun s -> s.inferred_types) in
     id_to_union
       |> Int_Map.find uid
       |> Int_Set.elements
@@ -1466,6 +1476,22 @@ module Tagging = struct
   *)
   let find_retagging ?check_names tys ty =
     first_where (is_instance_simple ?check_names) tys ty
+
+  let rec shallow_type_of ?(remove_names=false) ?(depth=Int.max_int) ty =
+    if depth <= 0 then State.pure TUniv else
+    match ty with
+    | TRec (name, record) ->
+      let* { field_depths; _ } = State.ask in
+      let name' = if remove_names then None else name in
+      let+ record' = record
+        |> traverse begin fun (field, field_ty) ->
+          let depth' = ID_Map.find field field_depths in
+          let+ ty' = shallow_type_of ~remove_names:true ~depth:(min depth' (depth - 1)) field_ty in
+          (field, ty')
+        end
+      in TRec (name', record')
+    | other ->
+        State.pure other
 
   (**
     Traverse each of the clauses in the expression
@@ -1500,7 +1526,7 @@ module Tagging = struct
     for the given program point and appended records.
   *)
   and [@warning "-8"] process_append (pp : ident) (i1 : ident) (i2 : ident) =
-    let* record_renamings = State.asks snd in
+    let* { record_rename; _ } = State.ask in
     let* ppu_id = union_id_of pp
     and+ i1u_id = union_id_of i1
     and+ i2u_id = union_id_of i2 in
@@ -1518,25 +1544,26 @@ module Tagging = struct
       let ty1' = ty1 |> List.to_seq |> ID_Map.of_seq in
 
       i2_tags |> traverse (fun t2 ->
-        let+ ty2 = type_of_tag t2 in
+        let* ty2 = type_of_tag t2 in
         match ty2 with
         | TRec (_, ty2) ->
-        let ty2' = ty2 |> List.to_seq |> ID_Map.of_seq in
-
-        let tyname = ID_Map.find pp record_renamings in
-        let ty' = TRec (
-          Some tyname,
-          ID_Map.union (fun _ _ t2 -> Some(t2)) ty1' ty2'
-          |> ID_Map.bindings
-        ) in
-
-        let t_ix = find_retagging pp_types ty' ~default:(-1) in
-        if t_ix != -1 then
-          Type_Tag_Pair_Map.singleton (t1, t2) (List.nth pp_tags t_ix)
-        else
-          Type_Tag_Pair_Map.empty
-
-        | _ -> Type_Tag_Pair_Map.empty
+            let ty2' = ty2 |> List.to_seq |> ID_Map.of_seq in
+            let+ ty' = shallow_type_of @@ (canonicalize_simple @@ TRec (
+              Some pp,
+              ID_Map.union (fun _ _ t2 -> Some(t2)) ty1' ty2'
+              |> ID_Map.bindings
+            )) in
+            begin match Type_Map.find_opt ty' record_rename with
+            | None -> Type_Tag_Pair_Map.empty (* This happens when the type is impossible abstractly. *)
+            | Some(ty') ->
+            let t_ix = find_retagging pp_types ty' ~default:(-1) in
+            if t_ix != -1 then
+              Type_Tag_Pair_Map.singleton (t1, t2) (List.nth pp_tags t_ix)
+            else
+              Type_Tag_Pair_Map.empty
+            end
+        | _ ->
+          State.pure Type_Tag_Pair_Map.empty
       )
       | _ -> State.pure []
     ) in
@@ -1557,7 +1584,7 @@ module Tagging = struct
     for the given program point and record definition.
   *)
   and process_record (pp : ident) (record : (label * ident) list) =
-    let* record_renamings = State.asks snd in  
+    let* { record_rename; _ } = State.ask in
     let* records = record
       |> traverse (fun (lbl, elt) ->
           let* elt_uid  = union_id_of elt in
@@ -1574,13 +1601,16 @@ module Tagging = struct
     let* pp_types = traverse type_of_tag pp_tags in
     let* field_maps =
       records |> traverse @@ fun record ->
-        let+ rty =
+        let* rty =
           ID_Map.bindings record |> traverse (fun (lbl, tag) ->
             let+ ty = type_of_tag tag in (lbl, erase_type_names ty))
         in
-        let tyname = ID_Map.find pp record_renamings in
-        let t_ix = find_retagging ~default:(-1)
-          pp_types (TRec (Some tyname, rty)) in
+
+        let+ ty' = shallow_type_of @@ (canonicalize_simple @@ TRec (Some pp, rty)) in
+        match Type_Map.find_opt ty' record_rename with
+        | None -> Field_Tags_Map.empty (* This happens when the type is impossible abstractly. *)
+        | Some(ty') ->
+        let t_ix = find_retagging ~default:(-1) pp_types ty' in
         if t_ix != -1 then
           Field_Tags_Map.singleton record (List.nth pp_tags t_ix)
         else
@@ -1623,9 +1653,9 @@ module Tagging = struct
     compute all the necessary record and match related
     lookup tables for a tagged runtime.
   *)
-  let compute_tag_tables (inferred_types, record_renamings) (expr : Ast.expr) =
+  let compute_tag_tables info (expr : Ast.expr) =
     let (tag_state, _, ()) =
-      visit_expr expr (inferred_types, record_renamings)
+      visit_expr expr info
       {
         record_tables = ID_Map.empty;
         append_tables = ID_Map.empty;
@@ -1649,7 +1679,7 @@ type full_analysis =
     log              : FlowTracking.log_t;        (** Debug log. *)
     field_depths     : Matching.field_depth_t;    (** Required depth for each record field *)
     inferred_types   : Typing.inferred_types_t;   (** Inferred types. *)
-    record_renamings : ident ID_Map.t;            (** Map of record names to consolidate unions. *)
+    record_rename    : simple_type Type_Map.t;    (** Map of record names to consolidate unions. *)
     tag_tables       : Tagging.tag_tables;        (** Lookup tables for computing type tags fast *)
     closures         : Closures.closure_info_map  (** Information about captured values and returns of closures *)
   }
@@ -1663,8 +1693,8 @@ let full_analysis_of ?(k=0) expr =
   let field_depths = Matching.find_required_depths expr in
   let closures = Closures.get_closure_info expr in
   let (flow, log, results) = FlowTracking.eval ~k field_depths expr in
-  let (inferred_types, record_renamings) = Typing.assign_program_point_types flow.data_flow flow.type_flow in
-  let tag_tables = Tagging.compute_tag_tables (inferred_types, record_renamings) expr in
+  let (inferred_types, record_rename) = Typing.assign_program_point_types flow.data_flow flow.type_flow in
+  let tag_tables = Tagging.compute_tag_tables { inferred_types; field_depths; record_rename } expr in
   {
     pp_to_body;
     flow;
@@ -1672,7 +1702,7 @@ let full_analysis_of ?(k=0) expr =
     results;
     field_depths;
     inferred_types;
-    record_renamings;
+    record_rename;
     tag_tables;
     closures;
   }

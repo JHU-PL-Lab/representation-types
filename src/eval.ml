@@ -30,7 +30,7 @@ type exn +=
   | Empty_Expression
   | End_of_input
   | Interpreters_Out_Of_Step
-  
+
 
 (**
   The interpreter which uses runtime type tag information
@@ -47,7 +47,7 @@ module TaggedEvaluator = struct
   end))
 
   open RValue
-  
+
   (**
     The only state we need in this case
     is the runtime environment,
@@ -94,15 +94,15 @@ module TaggedEvaluator = struct
   let ( let$ ) v f =
     protect Type_Mismatch f v
 
-  (** 
-    {!protect} + mapping over a monadic action. 
-    (like {{!Layout.Classes.Functor_Util.Syntax.val-let+} let+}) 
+  (**
+    {!protect} + mapping over a monadic action.
+    (like {{!Layout.Classes.Functor_Util.Syntax.val-let+} let+})
   *)
   let ( let$+ ) (v : _ State.t) f : _ State.t =
     protect Type_Mismatch f <$> v
 
-  (** 
-    {!protect} + binding a monadic action. 
+  (**
+    {!protect} + binding a monadic action.
     (like {{!Layout.Classes.Monad_Util.Syntax.val-let*} let*})
   *)
   let ( let$* ) (v : _ State.t) (f : _ -> _ State.t) : _ State.t =
@@ -126,15 +126,15 @@ module TaggedEvaluator = struct
         let* { field_depths; _ } = State.asks (fun s -> s.analysis) in
         let+ record' = record
           |> ID_Map.bindings
-          |> traverse (fun (lbl, rv') -> 
+          |> traverse (fun (lbl, rv') ->
             let depth' = ID_Map.find lbl field_depths in
             let+ ty = type_of ~depth:(min depth' (depth - 1)) rv' in
               (lbl, ty)
-          ) 
+          )
         in
           TRec (Some name, record')
 
-  
+
   (**
     Use the {!full_analysis} to look up the
     {!Types.type_tag} and associated {!Types.simple_type}
@@ -212,7 +212,7 @@ module TaggedEvaluator = struct
     | VInt i -> tagged TInt   @@ RInt i
     | VTrue  -> tagged TTrue  @@ RBool true
     | VFalse -> tagged TFalse @@ RBool false
-    
+
     | VFun (id, expr) ->
       let* env = State.gets (fun s -> s.env) in
       let+ tfun = type_tag_of TFun in
@@ -221,11 +221,12 @@ module TaggedEvaluator = struct
 
     | VRec record ->
       let* record' =
-        record |> traverse (fun (lbl, id) -> let+ rv = lookup id in (lbl, rv)) 
+        record |> traverse (fun (lbl, id) -> let+ rv = lookup id in (lbl, rv))
       in
       let record' = record' |> List.to_seq |> ID_Map.of_seq in
       let field_tags = ID_Map.map fst record' in
       let+ { record_tables; _ } = State.asks (fun s -> s.analysis.tag_tables) in
+      (* Format.eprintf "%s : %a : %a\n" pp (pp_id_map pp_type_tag) field_tags (pp_id_map (pp_field_tags_map pp_type_tag)) record_tables; *)
       let tag = record_tables
         |> ID_Map.find pp
         |> Field_Tags_Map.find field_tags
@@ -240,7 +241,7 @@ module TaggedEvaluator = struct
     match ID_Map.find_opt lbl record with
     | None     -> raise Type_Mismatch
     | Some(v)  -> v
-  
+
   (**
     Evaluate (and tag properly) the result of an {!Ast.operator}.
   *)
@@ -326,7 +327,7 @@ module TaggedEvaluator = struct
     | BApply (id1, id2) -> eval_apply id1 id2
     | BMatch (id, branches) -> eval_match pp id branches
     | BInput  -> get_input
-    | BRandom -> 
+    | BRandom ->
         tagged TInt @@ RInt (Random.int 65536)
 
   (**
