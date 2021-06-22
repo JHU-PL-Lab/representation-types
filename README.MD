@@ -9,7 +9,7 @@ implement a dynamic language in an efficient manner.
 ## Building
 
 Building this code is known to work with `dune` v2.4.0 and `ocaml` 4.11.0 or newer.
-The only dependencies are `menhir`, `ppx_deriving` and `ppx_inline_test`.
+The only `opam` dependencies are `menhir`, `ppx_deriving` and `ppx_inline_test`.
 
 Some documentation of the overall module structure can be built with `dune build @doc`.
 

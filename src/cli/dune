@@ -11,19 +11,15 @@
    (libraries layout stdio)
    (modes byte native))
 
-
 (env
+   (dev
+      (flags (:standard -w -23-33-38-39-66 -rectypes))
+      (ocamlopt_flags (:standard -O3)))
 
-    (debug
-        (flags (:standard -w -23-33-38-39-66 -rectypes))
-        (ocamlopt_flags (:standard -g -afl-instrument)))
-
-    (dev
-        (flags (:standard))
-        (ocamlopt_flags 
-            (:standard 
-             -O3 -afl-instrument
-             -cc afl-clang )))
-    (release
-        (flags (:standard))
-        (ocamlopt_flags (:standard -O3))))
+   (afl
+      (flags (:standard -w -23-33-38-39-66 -rectypes))
+      (ocamlopt_flags 
+        (:standard 
+            -g -O3 
+            -afl-instrument
+            -cc afl-clang ))))

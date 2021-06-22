@@ -24,17 +24,13 @@
          ppx_inline_test)))
 
 (env
-   (debug
+   (dev
       (flags (:standard -w -23-33-38-39-66 -rectypes))
-      (ocamlopt_flags (:standard -g -afl-instrument)))
+      (ocamlopt_flags (:standard -O3)))
 
-   (dev 
+   (afl
       (flags (:standard -w -23-33-38-39-66 -rectypes))
-      (ocamlopt_flags (:standard -O3 -afl-instrument)))
-
-   (release
-      (flags (:standard -w -23-33-38-39-66 -rectypes))
-      (ocamlopt_flags (:standard -O3))))
+      (ocamlopt_flags (:standard -g -afl-instrument))))
 
 (ocamllex
    (modules lexer))
