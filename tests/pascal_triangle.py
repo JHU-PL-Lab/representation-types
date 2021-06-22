@@ -6,7 +6,8 @@ def getNumber(row, column):
     else:
         return getNumber(row - 1, column - 1) + getNumber(row - 1, column)
 
-row = int(input())
-col = int(input())
 
-print(getNumber(row, col))
+if __name__ == "__main__":
+    row = int(input())
+    col = int(input())
+    print(getNumber(row, col))

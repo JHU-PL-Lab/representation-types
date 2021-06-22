@@ -7,8 +7,8 @@ let k = ref 0
 
 let () =
   Arg.parse [
-    "-k",    Arg.Set_int k,       "Context sensitivity for analysis.";
-    (* "--box", Arg.Set boxing_mode, "Change calling convention to use more pointers."; *)
+    "-k", Arg.Set_int k, "Context sensitivity for analysis.";
+    "-s", Arg.Set_int Compiler.C.max_unboxed_size, "Size past which structs are boxed.";
   ] 
   print_endline
   "C transpiler for layout types.";

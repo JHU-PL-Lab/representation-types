@@ -9,4 +9,5 @@ def read_input():
     return l
 
 
-print(sorted(read_input()))
+if __name__ == "__main__":
+    print(sorted(read_input()))

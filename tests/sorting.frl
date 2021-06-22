@@ -1,34 +1,37 @@
 
-let rec partition = fun p l ->
-    match l with
-    | { Nil  : * } -> ( l; l )
-    | { Cons : * } ->
-        let parts = partition p l.tl in
-        let hd = l.hd in
-        if p hd then
-            ( {.Cons; hd = hd; tl = parts.0}; parts.1 )
-        else
-            ( parts.0; {.Cons; hd = hd; tl = parts.1} )
+let rec reverse_concat = fun args ->
+    let l1 = args.0 in
+    let l2 = args.1 in
+    match l1 with
+    | { Nil  : * } -> l2
+    | { Cons : * } -> reverse_concat (l1.tl; {.Cons; hd = l1.hd; tl = l2})
     end
 in
 
-let rec concat = fun l1 l2 ->
-    match l1 with
-    | { Nil  : * } -> l2
-    | { Cons : * } -> { .Cons; hd = l1.hd; tl = concat l1.tl l2 }
+let rec partition = fun args ->
+    let p     = args.0 in
+    let l     = args.1 in
+    let parts = args.2 in
+    match l with
+    | { Nil  : * } -> parts
+    | { Cons : * } ->
+        let hd = l.hd in
+        if p hd then
+            partition (p; l.tl; ({.Cons; hd = hd; tl = parts.0}; parts.1))
+        else
+            partition (p; l.tl; (parts.0; {.Cons; hd = hd; tl = parts.1}))
     end
 in
 
 let rec sort = fun l ->
     match l with
     | { Nil  : * } -> l
-    (* | { Cons : * ; tl : { Nil : * } } -> l *)
     | { Cons : * } ->
         let hd = l.hd in
-        let parts = partition (fun elem -> elem < hd) l.tl in
-        let left  = sort parts.0 in
+        let parts = partition ((fun elem -> elem < hd); l.tl; ({.Nil}; {.Nil})) in
+        let left  = reverse_concat (sort parts.0; {.Nil}) in
         let right = sort parts.1 in
-        concat left {.Cons; hd = hd; tl = right}
+        reverse_concat (left; right)
     end
 in
 

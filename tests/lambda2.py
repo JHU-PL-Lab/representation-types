@@ -94,10 +94,8 @@ identity = Lam(0,
 )
 
 
-n = int(input())
-
-one = Apl(Apl(sub, church(n)), church(n - 1))
-
-sys.setrecursionlimit(n * n)
-
-print(Apl(identity, one).eval())
+if __name__ == "__main__":
+    n = int(input())
+    one = Apl(Apl(sub, church(n)), church(n - 1))
+    sys.setrecursionlimit(n * 20)
+    print(Apl(identity, one).eval())

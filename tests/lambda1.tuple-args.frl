@@ -1,0 +1,109 @@
+
+let var = fun id ->
+    { Var = id }
+in
+
+let lam = fun id body ->
+    { .Lam; Arg = id; Body = body }
+in
+
+let apl = fun e1 e2 ->
+    { .Apl; Lhs = e1; Rhs = e2 }
+in
+
+
+let rec subst = fun args ->
+    let var   = args.0 in
+    let value = args.1 in
+    let term  = args.2 in
+    match term with
+    | { Var : int } -> 
+        if term.Var == var then value else term
+
+    | { Lam : * } ->
+        if term.Arg == var then term else
+        lam term.Arg (subst (var; value; term.Body))
+
+    | { Apl : * } ->
+        apl (subst (var; value; term.Lhs)) (subst (var; value; term.Rhs))
+    end
+in
+
+let rec eval = fun term ->
+    match term with
+    | { Lam : * } -> term
+    | { Apl : * } ->
+        let lhs = eval term.Lhs in
+        let rhs = eval term.Rhs in
+        match lhs with
+        | { Lam : * } ->
+            let subst_body = subst (lhs.Arg; rhs; lhs.Body) in
+            eval subst_body
+        end
+    end
+in
+
+let succ =
+    lam 1 ( (* n *)
+    lam 2 ( (* f *)
+    lam 3 ( (* x *)
+        apl (var 2) (apl (apl (var 1) (var 2)) (var 3))
+    )))
+in
+
+let add =
+    lam 1 ( (* n *)
+    lam 2 ( (* m *)
+        apl (apl (var 1) succ) (var 2)
+    ))
+in
+
+let mul = 
+    lam 1 ( (* n *)
+    lam 2 ( (* m *)
+    lam 3 ( (* f *)
+        apl (var 1) (apl (var 2) (var 3))
+    )))
+in
+
+let pred =
+    lam 1 ( (* n *)
+    lam 2 ( (* f *)
+    lam 3 ( (* x *)
+        apl (
+            apl (
+                apl (var 1) (lam 4 (lam 5 (apl (var 5) (apl (var 4) (var 2)))))
+            ) (
+                lam 6 (var 3)
+            )
+        ) (
+            lam 6 (var 6)
+        )
+    )))
+in
+
+let sub =
+    lam 1 ( (* n *)
+    lam 2 ( (* m *)
+        apl (apl (var 2) pred) (var 1)
+    ))
+in
+
+
+let rec church = fun n ->
+    if n == 0 then 
+        lam 0 (lam 1 (var 1))
+    else
+        apl succ (church (n - 1))
+in
+
+let identity = 
+    lam 0 (apl (apl (var 0) succ) (church 0))
+in
+
+
+let n = input in
+
+let one = apl (apl sub (church n)) (church (n - 1)) in
+
+eval (apl identity one)

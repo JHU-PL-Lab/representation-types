@@ -1,9 +1,15 @@
 
-from contextlib import contextmanager
-from collections import defaultdict
+from operator       import itemgetter, attrgetter
+from more_itertools import mark_ends
+from itertools      import groupby
+from typing         import List, Dict, Tuple, Optional
+from dataclasses    import dataclass, field
+from contextlib     import contextmanager
+from collections    import defaultdict, OrderedDict
 import json
 import sys
 import os
+
 
 class dotdict(dict):
     def __getattr__(self, field):
@@ -22,52 +28,244 @@ def env(name, etc = None):
 
 
 
-def print_table(input, display_name, benches):
+default_colors = {
+    "Elixir": "blue",
+    "Pypy3": "black",
+    "Python3": "magenta",
+    "Us": "green",
+}
 
-    with env("table"):
-        with env("tabular", "{ | l | r @{\;$\pm$\;} l | r | r | r | }"):
-            print("\hline")
-            print(rf" Program & Mean & Std Dev & Min & Max & Ratio to best \\")
-            print("\hline\hline")
 
-            for b in benches:
-                print(b.exe, end=" ")
-                if b.runtime:
-                    print(f"({b.runtime}) ", end="")
-                if b.best:
-                    print(rf"& \textbf{{{b.mean:2.2f}}} & \textbf{{{b.stddev:2.2f}}}", end="")
-                else:
-                    print(rf"& {b.mean:2.2f} & {b.stddev:2.2f} ", end="")
-                print(rf"& {b.min:2.2f} & {b.max:2.2f} ", end="")
-                print(rf"& {b.ratio:2.2f} \\")
-                print("\hline")
-        print(rf"\caption{{\label{{tab:{input}}}{display_name}}}")
+def row(*strs):
+    print(" & ".join(strs), end="")
+
+def multi_column(n, arg, *strs):
+    strs = " & ".join(strs)
+    return rf"\multicolumn{{{n}}}{arg}{{{strs}}}"
+
+def multi_row(n, str):
+    return rf"\multirow{{{n}}}{{*}}{{{str}}}"
+
+def continue_row(*strs):
+    row("", *strs)
+
+def end_row():
+    print(r"\\")
+
+def hline():
+    print(r"\hline")
+
+def toprule():
+    print(r"\toprule")
+
+def midrule():
+    print(r"\midrule")
+
+def bottomrule():
+    print(r"\bottomrule")
+
+def bold(str):
+    return rf"\textbf{{{str}}}"
+
+def bold_if(b, *strs):
+    return map(bold, strs) if b else strs
+
+def add_plot_coordinates(color, coords):
+    coord_str = "".join(str(c) for c in coords)
+    print(rf"\addplot[smooth, mark=*, color={color}] coordinates {{{coord_str}}};")
+
+def add_bar_coordinates(color, coords):
+    coord_str = "".join(str(c) for c in coords)
+    print(rf"\addplot[fill={color}, color={color}] coordinates {{{coord_str}}};")
+
+def add_legend(labels):
+    labels_str = ",".join(labels)
+    print(rf"\legend{{{labels_str}}}")
+
+def fill_between(label1, label2, color):
+    print(rf"\addplot[{color}!80, fill opacity=0.5] fill between[of={label1} and {label2}];")
+
+def caption_figure(text):
+    print(rf"\caption{{{text}}}")
+
+def label_figure(label):
+    print(rf"\label{{{label}}}")
+
+
+@dataclass
+class ResultsManager:
+    # (bench, input_size, runtime, condition) -> details
+    entries : dict[tuple, list] = field(default_factory=dict) 
+
+    def ingest(self, file_json):
+        results = bench_results(file_json)
+        for result in results:
+            id = (result.name, result.input or "n/a", result.runtime, result.cond)
+            self.entries[id] = result
+
+    
+    def print_table(self):
+
+        entries = [(*k, v) for (k, v) in self.entries.items()]
+        entries.sort(key=lambda e: e[:2])
+
+        with env("tabular", "{ l l l l r @{\;$\pm$\;} l r r r }"):
+            
+            row("Benchmark", "Runtime", "(Condition)", "(Input Size)", "Mean", "Std Dev (ms)", "Ratio to best")
+            end_row()
+            toprule()
+
+            for (name, named_entries) in groupby(entries, itemgetter(0)):
+                
+                for (size, sized_entries) in groupby(named_entries, itemgetter(1)):
+                    midrule()    
+                    sized_entries = list(sized_entries)
+                    n_entries = len(sized_entries)
+
+                    sized_entries = iter(sized_entries)
+                    name, size, runtime, cond, info = next(sized_entries)
+                    cond = ",".join(cond) or "default"
+                    row(multi_row(n_entries, name), *bold_if(info.best, runtime, cond), multi_row(n_entries, size), *bold_if(info.best, f"{info.mean:0.2f}", f"{info.stddev:0.2f}", f"{info.ratio:0.2f}"))
+                    end_row()
+                
+                    for name, size, runtime, cond, info in sized_entries:
+                        cond = ",".join(cond) or "default"
+                        row("", *bold_if(info.best, runtime, cond), "", *bold_if(info.best, f"{info.mean:0.2f}", f"{info.stddev:0.2f}", f"{info.ratio:0.2f}"))
+                        end_row()
+            
+            bottomrule()
+
+
+    def print_chart(self):
+        
+        entries = [(*k, v) for (k, v) in self.entries.items()]
+        entries.sort(key=itemgetter(2, 3))
+
+        with env("tikzpicture"):
+            
+            inputs = []
+            for (benchname, input, _, _, _) in entries:
+                if not input in inputs:
+                    inputs.append(input)
+            inputs_str = ",".join(map(str, inputs))
+
+            if len(inputs) == 1:
+                ticklabels = benchname
+            else:
+                ticklabels = inputs_str
+
+            with env("axis", rf"""[
+                ybar,
+                ymin=0.0,
+                ylabel=Time (s),
+                xtick=data,
+                scaled ticks=false,
+                symbolic x coords={{{inputs_str}}},
+                width=0.3\textwidth,
+                height=0.5\textwidth,
+                xticklabels={{{ticklabels}}},
+                ymajorgrids,
+                nodes near coords,
+                legend pos=outer north east,
+                every node near coord/.append style={{
+                    rotate=90, anchor=west, /pgf/number format/fixed
+                }},
+                enlarge y limits={{upper,value=0.4}},
+                enlarge x limits=0.5,
+            ]"""):
+    
+                best_times = defaultdict(OrderedDict)
+                best_info = defaultdict(OrderedDict)
+
+                for (_, input, runtime, cond, info) in entries:
+                    if info.mean < best_times[runtime].get(input, float("inf")):
+                        best_times[runtime][input] = info.mean
+                        best_info[runtime][input] = info
+                    
+
+                runtimes = []
+                for runtime, input_info in best_info.items():
+                    runtimes.append(runtime)
+
+                    infos = [f"({input}, {info.mean/1000:0.2f})" for input, info in input_info.items() ]
+                    add_bar_coordinates(default_colors[runtime], infos)
+
+                add_legend(runtimes)
+                
+
+
+
+
+
+    def print_graph(self):
+
+        entries = [(*k, v) for (k, v) in self.entries.items()]
+        entries.sort(key=itemgetter(2, 3))
+
+        with env("tikzpicture"):
+            with env("axis", r"""[
+                xmode=log,
+                ymode=log,
+                xlabel=Input size,
+                ylabel=Time (secs),
+                legend pos=outer north east,
+                width=0.9\textwidth,
+            ]"""):
+
+                labels = []
+                grouped = [
+                    ("-".join((runtime, *cond)), list(entries)) 
+                    for ((runtime, cond), entries) in groupby(entries, itemgetter(2, 3))
+                ]
+
+                for (label, cond_entries) in grouped:
+                    infos = list(map(itemgetter(-1), cond_entries))
+                    labels.append(label)
+
+                    coordinates = [(int(info.input), info.mean / 1000) for info in infos]
+                    add_plot_coordinates(default_colors[label], coordinates)
+
+                # for (label, cond_entries) in grouped:
+                #     infos = list(map(itemgetter(-1), cond_entries))
+                #     label_hi = label+"hi"
+                #     label_lo = label+"lo"
+
+                #     coordinates_hi = [(int(info.input), (info.mean + info.stddev) / 1000) for info in infos]
+                #     coordinates_lo = [(int(info.input), (info.mean - info.stddev) / 1000) for info in infos]
+                    
+                #     add_plot_coordinates(label_hi, color_of[label], coordinates_hi)
+                #     add_plot_coordinates(label_lo, color_of[label], coordinates_lo)
+
+                #     fill_between(label+"hi", label+"lo", color_of[label])
+
+
+                add_legend(labels)
+
+
             
 
 def bench_results(d):
-    inputs  = []
     benches = []
 
     for bench in d["results"]:
         bench = dotdict(bench)
         
         cmd = bench.command.split("<")
-        exe, runtime, *_ = *cmd[0].strip("./ ").split()[::-1], None
+        exe, runtime, *_ = *cmd[0].strip("./ ").split()[::-1], "us"
         
-        inp = os.path.basename(cmd[1].strip()).replace("_", "-")
-        inputs.append(inp)
+        inp = os.path.basename(cmd[1].strip()).split(".")
+        exe = exe.split(".")
 
-        bench.name    = inp.split(".")[0]
-        bench.input   = inp
-        bench.exe     = os.path.basename(exe).replace("_", "-")
-        bench.runtime = runtime or "us" # ("us.nogc" if "nogc" in bench.exe else "us")
+        bench.name    = inp[0].replace("_", "-")
+        bench.input   = "n/a" if len(inp) == 2 else inp[1]
+        bench.cond    = tuple(exe[1:-1])
+        bench.runtime = runtime.capitalize()
         bench.min    *= 1000
         bench.max    *= 1000
         bench.mean   *= 1000
         bench.median *= 1000
         bench.stddev *= 1000
         benches.append(bench)
-
 
     bests = defaultdict(lambda: float("inf"))
     for bench in benches:
@@ -80,23 +278,6 @@ def bench_results(d):
 
     return benches
 
-
-def print_results(d):
-
-    bench_by_input = defaultdict(list)
-    for result in bench_results(d):
-        bench_by_input[result.input].append(result)
-    
-    for input, benches in bench_by_input.items():
-        
-        benches.sort(key = lambda b: (b.exe, b.runtime))
-
-        input_parts = input.split(".")
-        display_name = f"``{input_parts[0].replace('-', ' ').capitalize()}''"
-        if len(input_parts) == 3:
-            display_name = f"{display_name} ({input_parts[1]})"
-
-        print_table(input, display_name, benches)
 
 
 def mean(l):
@@ -118,7 +299,7 @@ def summarize_results(ds):
             ratios_by_input_runtime[result.input][result.runtime].append(result.ratio)
             ratios_by_runtime[result.runtime].append(result.ratio)
 
-    runtimes = ["python3", "pypy3", "elixir", "us"] # , "us.nogc"]
+    runtimes = ["python3", "pypy3", "elixir", "us"]
 
     with env("table"):
         with env("tabular", "{ | r || r | r | r | r | }"):
@@ -168,17 +349,16 @@ def summarize_results(ds):
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "individual":
-        for in_filename in sys.argv[2:]:
-            with open(in_filename, "r") as f:
-                print_results(json.load(f))
-    elif sys.argv[1] == "summary":
-        dumps = []
-        for in_filename in sys.argv[2:]:
-            with open(in_filename, "r") as f:
-                dumps.append(json.load(f))
-        summarize_results(dumps)
-
+    results = ResultsManager()
+    for in_filename in sys.argv[2:]:
+        with open(in_filename, "r") as f:
+            results.ingest(json.load(f))
+    if sys.argv[1] == "table":
+        results.print_table()
+    elif sys.argv[1] == "line-graph":
+        results.print_graph()
+    elif sys.argv[1] == "bar-chart":
+        results.print_chart()
 
 
 

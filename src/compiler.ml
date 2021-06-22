@@ -66,6 +66,8 @@ typedef void *Univ;
 
 module C = struct
 
+  let max_unboxed_size = ref 16
+
   type convention =
     [ `Stack of int | `Heap ]
     [@@deriving show]
@@ -224,7 +226,7 @@ module C = struct
           let* uid = uid_of (sf "%s.%s" name field) in
           let+ u_conv = convention_of_union ~us uid in
           match u_conv with
-          | `Stack n -> n
+          | `Stack n -> min n 8
           | `Heap    -> 8
         end
       in
@@ -267,7 +269,7 @@ module C = struct
     State.pure conv
 
   and allow_unboxed_union_size s =
-    s <= 16
+    s <= !max_unboxed_size
 
   let size_of_union uid =
     let+ conv = convention_of_union uid in

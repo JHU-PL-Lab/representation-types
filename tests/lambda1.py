@@ -76,11 +76,8 @@ identity = Lam(0,
     Apl(Apl(Var(0), succ), church(0))
 )
 
-
-n = int(input())
-
-one = Apl(Apl(sub, church(n)), church(n - 1))
-
-sys.setrecursionlimit(n * 10)
-
-print(eval(Apl(identity, one)))
+if __name__ == "__main__":
+    n = int(input())
+    one = Apl(Apl(sub, church(n)), church(n - 1))
+    sys.setrecursionlimit(n * 10)
+    print(eval(Apl(identity, one)))
