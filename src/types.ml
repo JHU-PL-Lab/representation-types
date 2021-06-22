@@ -24,12 +24,12 @@ let rec for_some2 l1 l2 f =
   | (e1 :: l1'), (e2 :: l2') ->
       if f e1 e2 then true else for_some2 l1' l2' f
   | _ -> false
-  
+
 type label = string
   [@@deriving show, eq, ord]
 
 type simple_type =
-  | TUniv 
+  | TUniv
   | TInt
   | TFun
   | TTrue | TFalse
@@ -65,10 +65,10 @@ type type_tag =
 let pp_type_tag fmt (Tag tag) =
   Format.fprintf fmt "#%a"
     pp_type_id tag
-  
+
 let rec erase_type_names : simple_type -> simple_type =
   function
-  | TRec (_, r1) -> 
+  | TRec (_, r1) ->
       TRec (None, r1 |> List.map (fun (f, ty) -> (f, erase_type_names ty)))
   | other -> other
 
@@ -117,12 +117,12 @@ let rec is_subtype_simple (t1 : simple_type) (t2 : simple_type) : bool =
   | t1, t2 when t1 = t2 -> true
   | _others -> false
 
-  
+
 let rec canonicalize_simple (base : simple_type) : simple_type =
   match base with
   | TRec (name, record) ->
       let record' = record
-        |> List.map (fun (lbl, elem_base) -> (lbl, canonicalize_simple elem_base)) 
+        |> List.map (fun (lbl, elem_base) -> (lbl, canonicalize_simple elem_base))
         |> List.sort (fun (l1,_) (l2,_) -> compare l1 l2)
       in
       TRec (name, record')
