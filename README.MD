@@ -11,6 +11,9 @@ implement a dynamic language in an efficient manner.
 Building this code is known to work with `dune` v2.4.0 and `ocaml` 4.11.0 or newer.
 The only `opam` dependencies are `menhir`, `ppx_deriving` and `ppx_inline_test`.
 
+There is some support for AFL fuzzing, which optionally requires `afl-clang`. The
+build profile `afl` should be used to activate this feature.
+
 Some documentation of the overall module structure can be built with `dune build @doc`.
 
 ## Command-line usage
@@ -43,10 +46,9 @@ Eval.full_analysis_of' Tests.t5 (* for example *)
 A script has been provided to replicate the benchmarks included in the paper.
 By running `./bench.fish`, All benchmarks which have `.py`, `.exs`, `.frl`, and `.input`
 files will be compiled and executed to produce a `.json` file of results and a more
-readable markdown table. Benchmarks for which a `.json` file already exists will be skipped
-so that existing results are not discarded.
+readable markdown table. Benchmarks for which a `.json` file already exists will be skipped so that existing results are not discarded.
 
-This depends on the `fish` shell for the script (but it could be easily adapted to `sh`), and the `hyperfine` benchmarking tool to handle warmup runs, time measurement, averaging, etc.
+This depends on the `fish` shell for the script (but it could be easily adapted to `sh`), and the `hyperfine` benchmarking tool to handle warmup runs, time measurement, averaging, etc. The benchmarks require some installation of `python3`, `pypy3`,
+and `elixir`, as well as `gcc` and `libgc` to compile our generated C code.
 
-A secondary tool `results_to_latex.py` is included to convert the JSON data into latex tables,
-graphs, or bar charts.
+A secondary tool `results_to_latex.py` is included to convert the JSON data into latex tables, graphs, or bar charts.
