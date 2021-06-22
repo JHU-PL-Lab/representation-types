@@ -32,7 +32,13 @@ typedef struct {
 } Closure;
 
 #define UNREACHABLE __builtin_unreachable()
-#define ABORT exit(EXIT_FAILURE)
+
+#if defined(DEBUG)
+#define ABORT(msg) do { fprintf(stderr, msg, __LINE__); exit(EXIT_FAILURE); } while (0)
+#else
+#define ABORT(...) exit(EXIT_FAILURE)
+#endif
+
 #define COPY(...) __builtin_memcpy(__VA_ARGS__)
 #define COMBINE(a, b) (a) >= (b) ? (a) * (a) + (a) + (b) : (a) + (b) * (b)
 #define CALL(c, ...) ((c)->_func)((c), __VA_ARGS__)
@@ -50,7 +56,7 @@ typedef struct {
 #define TAGGED(U, T, value) ((U) { .tag = U ## _ ## T, . T = value })
 
 void __input(ssize_t *i) {
-  if (scanf("%zd", i) != 1) ABORT;
+  if (scanf("%zd", i) != 1) ABORT("Bad integer input.\n");
 }
 
 typedef struct {} Empty;
@@ -504,7 +510,7 @@ module C = struct
         emit [sf "%a%a = %a_%a;" fmt_place_loc place fmt_place_field "tag" fmt_union uid fmt_type tid]
       )
 
-  let   tag_setter_exn tid pp place =
+  let tag_setter_exn tid pp place =
     let+ set_tag = tag_setter tid pp place in
     match set_tag with
     | None -> raise Type_Mismatch
@@ -519,7 +525,9 @@ module C = struct
     else
     State.pure (`Loc (sf "%a%a" fmt_place_loc place fmt_place_type tid)) <*
     if Int_Set.cardinal u != 1 then
-      emit [sf "if (%a%a != %a_%a) ABORT;" fmt_place_loc place fmt_place_field "tag" fmt_union uid fmt_type tid]
+      let* t = type_of_tid tid in
+      let abort_msg = sf "Line: %%d\nProgram Point: %s\nValue %a did not have expected type %a@;@[<h>%a@]\n" pp fmt_place_loc place fmt_type tid pp_simple_type t in
+      emit [sf "if (%a%a != %a_%a) ABORT(%S);" fmt_place_loc place fmt_place_field "tag" fmt_union uid fmt_type tid abort_msg]
     else
       State.pure()
     
@@ -700,7 +708,10 @@ module C = struct
 
           | _ -> 
           match Field_Tags_Map.find_opt field_tags record_table with
-          | None          -> emit ["ABORT;"]
+          | None ->
+              let* field_types = ID_Map.traverse (fun (Tag tid) -> type_of_tid tid) field_tags in
+              let abort_msg = sf "Line: %%d\nProgram Point: %s\nInvalid combination of field types:@;@[<h>%a@]\n" pp (pp_id_map pp_simple_type) field_types in
+              emit [sf "ABORT(%S);" abort_msg]
           | Some(Tag tid) -> 
               let* set_tag = tag_setter_exn tid pp dest in
               set_tag *> init_fields tid
@@ -806,7 +817,10 @@ module C = struct
               None
             end
           | _ ->
-            Some (emit ["ABORT;"])
+            Some (
+              let abort_msg = sf "Line: %%d\nProgram Point: %s\nType %a is not a record, cannot project %s\n" pp pp_simple_type ty lbl in
+              emit [sf "ABORT(%S);" abort_msg]
+            )
         in
         
         if Int_Set.cardinal id_u = 1 then
@@ -846,7 +860,10 @@ module C = struct
           let branch_ix = Type_Tag_Map.find (Tag i1_tid) tag_to_branch in
           match List.nth_opt branches branch_ix with
           | Some((_, branch)) -> emit_clauses info dest_pp dest branch
-          | None              -> emit ["ABORT;"]
+          | None -> 
+              let* ty = type_of_tid i1_tid in
+              let abort_msg = sf "Line: %%d\nProgram Point: %s\nMatch destined to fail. No branch for type %a:\n%a\n" pp fmt_type i1_tid pp_simple_type ty in
+              emit [sf "ABORT(%S);" abort_msg]
         else
         let module Invert_Maps = Traversable_Util(Maps(Invert_Map)) in
         let module Invert_Maps = Invert_Maps.Make_Traversable(State) in
@@ -860,7 +877,9 @@ module C = struct
                 let branch_code = 
                   begin match List.nth_opt branches branch_ix with
                   | Some((_, branch))  -> emit_clauses info dest_pp dest branch
-                  | None | exception _ -> emit ["ABORT;"]
+                  | None | exception _ ->
+                      let abort_msg = sf "Line: %%d\nProgram Point: %s\nMatch fails for tags: %a\n" pp (pp_list pp_type_tag) tids in      
+                      emit [sf "ABORT(%S);" abort_msg]
                   end
                 in
                 bracketed_indented ["{"] ["}"]

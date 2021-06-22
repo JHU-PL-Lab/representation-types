@@ -2,16 +2,16 @@
 let empty = {.Nil} in
 
 let Red = fun data ->
-    { Red = data@{} }
+    { Red = data }
 in
 let Blk = fun data ->
-    { Blk = data@{} }
+    { Blk = data }
 in
 
 
 let blacken = fun node ->
     match node with
-    | { Red: * } -> { Blk = node.Red }
+    | { Red: * } -> Blk node.Red
     | *          -> node
     end
 in

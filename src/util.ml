@@ -163,6 +163,14 @@ end
   Pretty-printing
 *)
 
+let pp_list pp_elem fmt l =
+  match l with
+  | [] -> Format.fprintf fmt "[]"
+  | hd::tl ->
+    Format.fprintf fmt "[@[@,%a" pp_elem hd;
+    tl |> List.iter (Format.fprintf fmt ";@ %a" pp_elem);
+    Format.fprintf fmt "@]@,}"
+
 
 module Set_Pretty (S : Set.S) = struct
 
