@@ -162,7 +162,7 @@ class ResultsManager:
                 scaled ticks=false,
                 symbolic x coords={{{inputs_str}}},
                 width=0.3\textwidth,
-                height=0.5\textwidth,
+                height=0.35\textwidth,
                 xticklabels={{{ticklabels}}},
                 ymajorgrids,
                 nodes near coords,
@@ -209,7 +209,8 @@ class ResultsManager:
                 xlabel=Input size,
                 ylabel=Time (secs),
                 legend pos=outer north east,
-                width=0.9\textwidth,
+                width=0.5\textwidth,
+                height=0.5\textwidth,
             ]"""):
 
                 labels = []
